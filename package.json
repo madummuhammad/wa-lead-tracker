@@ -1,0 +1,17 @@
+{
+  "name": "wa-lead-backend",
+  "version": "1.0.0",
+  "description": "Backend API for WA Lead Tracker Chrome extension - syncs chats/settings to MongoDB Atlas.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mongoose": "^8.5.0",
+    "serverless-http": "^3.2.0"
+  }
+}
