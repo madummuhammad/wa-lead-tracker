@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 
 const { requireApiKey } = require('../middleware/auth');
@@ -13,6 +14,12 @@ function createApp() {
     console.log(`${new Date().toISOString()} ${req.method} ${req.path} auth=${req.get('authorization') ? 'yes' : 'no'}`);
     next();
   });
+
+  // Serves the standalone web dashboard for local dev (`npm run dev` ->
+  // http://localhost:3000/). On Netlify, static files under `public/` are
+  // served directly by Netlify's CDN per `netlify.toml`'s `publish` setting,
+  // so this middleware is simply never reached there - harmless either way.
+  app.use(express.static(path.join(__dirname, '../public')));
 
   app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -47,6 +54,22 @@ function createApp() {
 
       if (ops.length > 0) await Chat.bulkWrite(ops);
       res.json({ ok: true, count: ops.length });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // Bulk delete - the extension deletes locally then re-pushes the whole
+  // remaining `chats` object, but a client with no local mirror (the web
+  // dashboard) needs to tell the server directly which ids to remove.
+  app.post('/api/chats/delete', requireApiKey, async (req, res) => {
+    try {
+      const { ids } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: 'body must be { ids: [...] }' });
+      }
+      const result = await Chat.deleteMany({ _id: { $in: ids } });
+      res.json({ ok: true, deletedCount: result.deletedCount });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
