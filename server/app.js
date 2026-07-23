@@ -3,14 +3,18 @@ const path = require('path');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const ExcelJS = require('exceljs');
 
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const Chat = require('../models/Chat');
 const Settings = require('../models/Settings');
 const User = require('../models/User');
 const Product = require('../models/Product');
+const Order = require('../models/Order');
 
 const TOKEN_EXPIRY = '30d'; // personal tool, favor not re-logging-in over short-lived tokens
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 function createApp() {
   const app = express();
@@ -160,6 +164,29 @@ function createApp() {
 
   // ---- Products ----
 
+  // weight in gram, volume in cm3, length/width/height in cm - all optional,
+  // unlike name/price which every product needs.
+  const PRODUCT_DIMENSION_FIELDS = ['weight', 'volume', 'length', 'width', 'height'];
+
+  function parseProductDimensions(body) {
+    const dims = {};
+    for (const field of PRODUCT_DIMENSION_FIELDS) {
+      const raw = body[field];
+      if (raw === undefined || raw === null || raw === '') continue;
+      const num = Number(raw);
+      if (!Number.isFinite(num) || num < 0) {
+        throw new Error(`${field} must be a non-negative number`);
+      }
+      dims[field] = num;
+    }
+    return dims;
+  }
+
+  function serializeProduct(doc) {
+    const { _id, name, price, weight, volume, length, width, height } = doc;
+    return { id: _id, name, price, weight, volume, length, width, height };
+  }
+
   app.get('/api/products', requireAuth, async (req, res) => {
     try {
       const docs = await Product.find({}).sort({ name: 1 }).lean();
@@ -180,8 +207,14 @@ function createApp() {
       if (!Number.isFinite(priceNum) || priceNum < 0) {
         return res.status(400).json({ error: 'price must be a non-negative number' });
       }
-      const product = await Product.create({ name: name.trim(), price: priceNum });
-      res.json({ ok: true, product: { id: product._id, name: product.name, price: product.price } });
+      let dims;
+      try {
+        dims = parseProductDimensions(req.body || {});
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      const product = await Product.create({ name: name.trim(), price: priceNum, ...dims });
+      res.json({ ok: true, product: serializeProduct(product) });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
@@ -197,13 +230,24 @@ function createApp() {
       if (!Number.isFinite(priceNum) || priceNum < 0) {
         return res.status(400).json({ error: 'price must be a non-negative number' });
       }
-      const product = await Product.findByIdAndUpdate(
-        req.params.id,
-        { name: name.trim(), price: priceNum },
-        { new: true }
-      ).lean();
+      let dims;
+      try {
+        dims = parseProductDimensions(req.body || {});
+      } catch (e) {
+        return res.status(400).json({ error: e.message });
+      }
+      // $unset any dimension field not present in this request, so clearing a
+      // field on the client (leaving it blank) actually clears it server-side
+      // instead of leaving the old value behind.
+      const unset = {};
+      PRODUCT_DIMENSION_FIELDS.forEach((field) => {
+        if (!(field in dims)) unset[field] = '';
+      });
+      const update = { $set: { name: name.trim(), price: priceNum, ...dims } };
+      if (Object.keys(unset).length > 0) update.$unset = unset;
+      const product = await Product.findByIdAndUpdate(req.params.id, update, { new: true }).lean();
       if (!product) return res.status(404).json({ error: 'product not found' });
-      res.json({ ok: true, product: { id: product._id, name: product.name, price: product.price } });
+      res.json({ ok: true, product: serializeProduct(product) });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
@@ -213,6 +257,202 @@ function createApp() {
     try {
       await Product.findByIdAndDelete(req.params.id);
       res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // ---- Orders (imported from the COD fulfillment export xlsx) ----
+
+  const ORDER_REQUIRED_HEADERS = ['No. Order', 'Penerima', 'No. HP Penerima', 'Produk', 'Harga Produk'];
+  const INDONESIAN_MONTHS = {
+    jan: 0, feb: 1, mar: 2, apr: 3, mei: 4, jun: 5, jul: 6, agu: 7, ags: 7, sep: 8, okt: 9, nov: 10, des: 11,
+  };
+
+  function onlyDigits(value) {
+    return String(value || '').replace(/\D/g, '');
+  }
+
+  // "Nomor Admin Gudang" in the export is 62-prefixed (e.g. 6285726435813),
+  // but Chat.ownerNumber in this system is entered as local 0-prefixed
+  // (e.g. 085726435813, matching the existing Akun WA filter values) - so an
+  // order's admin number has to be converted to line up with it, or it'd
+  // show up as a separate, unfiltered "account".
+  function normalizeOwnerNumber(value) {
+    const digits = onlyDigits(value);
+    if (!digits) return '';
+    return digits.startsWith('62') ? `0${digits.slice(2)}` : digits;
+  }
+
+  function numOrUndefined(value) {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  }
+
+  // Source dates are plain text like "Kamis, 23 Jul 2026" (day name, day,
+  // Indonesian month abbreviation, year) - not native Excel date cells.
+  function parseIndonesianDate(value) {
+    if (!value) return undefined;
+    const match = String(value).match(/(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})/);
+    if (!match) return undefined;
+    const [, day, monthStr, year] = match;
+    const month = INDONESIAN_MONTHS[monthStr.toLowerCase().slice(0, 3)];
+    if (month === undefined) return undefined;
+    const date = new Date(Number(year), month, Number(day));
+    return isNaN(date.getTime()) ? undefined : date;
+  }
+
+  app.get('/api/orders', requireAuth, async (req, res) => {
+    try {
+      const docs = await Order.find({}).sort({ createdDate: -1 }).lean();
+      const orders = docs.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }));
+      res.json({ orders });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post('/api/orders/import', requireAuth, upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'file is required (field name "file")' });
+
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(req.file.buffer);
+      const worksheet = workbook.worksheets[0];
+      if (!worksheet) return res.status(400).json({ error: 'file has no sheets' });
+
+      const headerMap = {};
+      worksheet.getRow(1).eachCell((cell, colNumber) => {
+        headerMap[String(cell.value || '').trim()] = colNumber;
+      });
+
+      const missingHeaders = ORDER_REQUIRED_HEADERS.filter((h) => !headerMap[h]);
+      if (missingHeaders.length > 0) {
+        return res.status(400).json({ error: `Kolom wajib tidak ditemukan di file: ${missingHeaders.join(', ')}` });
+      }
+
+      const getCell = (row, header) => {
+        const col = headerMap[header];
+        if (!col) return undefined;
+        const v = row.getCell(col).value;
+        if (v === null || v === undefined || v === '') return undefined;
+        if (typeof v === 'object' && 'text' in v) return v.text; // rich text
+        if (typeof v === 'object' && 'result' in v) return v.result; // formula
+        return v;
+      };
+
+      const productCache = new Map(); // name -> product doc
+      const chatCache = new Map(); // phone -> chat doc
+
+      let ordersImported = 0;
+      let productsCreated = 0;
+      let contactsCreated = 0;
+      let rowsSkipped = 0;
+
+      for (let r = 2; r <= worksheet.rowCount; r++) {
+        const row = worksheet.getRow(r);
+        const noOrder = String(getCell(row, 'No. Order') || '').trim();
+        if (!noOrder) continue; // blank/trailing row
+
+        const productName = String(getCell(row, 'Produk') || '').trim();
+        const customerName = String(getCell(row, 'Penerima') || '').trim();
+        const customerPhone = onlyDigits(getCell(row, 'No. HP Penerima'));
+        const status = String(getCell(row, 'Status') || '').trim();
+        const ownerNumber = normalizeOwnerNumber(getCell(row, 'Nomor Admin Gudang'));
+        const createdDate = parseIndonesianDate(getCell(row, 'Tanggal Dibuat'));
+
+        if (!customerPhone) {
+          rowsSkipped++;
+          continue;
+        }
+
+        // Match the master Product catalog by exact name (assumed unique).
+        // A brand-new product only gets its name filled in - price and
+        // dimensions are left for the admin to fill in later on the Produk
+        // page, since this order's price is just a snapshot for this order.
+        let product = productCache.get(productName);
+        if (product === undefined && productName) {
+          product = await Product.findOne({ name: productName });
+          if (!product) {
+            product = await Product.create({ name: productName });
+            productsCreated++;
+          }
+          productCache.set(productName, product);
+        }
+
+        // Match the contact by phone number, creating it if this is a buyer
+        // we haven't seen before (e.g. never scanned from WA Web).
+        let chat = chatCache.get(customerPhone);
+        if (chat === undefined) {
+          chat = await Chat.findById(customerPhone);
+          if (!chat) {
+            chat = await Chat.create({
+              _id: customerPhone,
+              name: customerName,
+              phone: customerPhone,
+              ownerNumber: ownerNumber || undefined,
+              firstMessageDate: createdDate ? createdDate.toISOString() : undefined,
+              firstSeenAt: new Date().toISOString(),
+              manualClosing: status !== 'Dibatalkan',
+              manualClosingUpdatedAt: new Date().toISOString(),
+            });
+            contactsCreated++;
+          } else if (status !== 'Dibatalkan' && chat.manualClosing !== true) {
+            // A real order is a conversion regardless of shipping status -
+            // only a cancelled order shouldn't flip an existing contact.
+            chat.manualClosing = true;
+            chat.manualClosingUpdatedAt = new Date().toISOString();
+            await chat.save();
+          }
+          chatCache.set(customerPhone, chat);
+        }
+
+        const volumeRaw = getCell(row, 'Volume');
+        const zipcodeRaw = getCell(row, 'Zipcode');
+
+        await Order.findByIdAndUpdate(
+          noOrder,
+          {
+            $set: {
+              _id: noOrder,
+              shippingType: getCell(row, 'Pengiriman'),
+              courier: getCell(row, 'Kurir'),
+              customerName,
+              customerPhone,
+              address: getCell(row, 'Alamat'),
+              city: getCell(row, 'Kota penerima'),
+              productName,
+              productId: product ? product._id : undefined,
+              weight: numOrUndefined(getCell(row, 'Berat')),
+              qty: numOrUndefined(getCell(row, 'Jumlah')),
+              volume: volumeRaw !== undefined ? String(volumeRaw) : undefined,
+              shippingCost: numOrUndefined(getCell(row, 'Ongkos Kirim')),
+              codDiscount: numOrUndefined(getCell(row, 'Diskon COD')),
+              codFee: numOrUndefined(getCell(row, 'Biaya COD')),
+              // "Harga Produk" is blank in every row of this export format -
+              // the real per-order price ends up in "Nilai COD" instead.
+              // Prefer "Harga Produk" when a future export does fill it in.
+              price: numOrUndefined(getCell(row, 'Harga Produk')) ?? numOrUndefined(getCell(row, 'Nilai COD')),
+              codValue: numOrUndefined(getCell(row, 'Nilai COD')),
+              status,
+              trackingNumber: getCell(row, 'Resi'),
+              createdDate,
+              receivedDate: parseIndonesianDate(getCell(row, 'Tanggal Diterima')),
+              note: getCell(row, 'Catatan'),
+              refCode: getCell(row, 'Kode Referensi'),
+              reconciliationStatus: getCell(row, 'Status Rekonsiliasi'),
+              warehouseAdminName: getCell(row, 'Nama Admin Gudang'),
+              ownerNumber,
+              zipcode: zipcodeRaw !== undefined ? String(zipcodeRaw) : undefined,
+            },
+          },
+          { upsert: true, new: true }
+        );
+        ordersImported++;
+      }
+
+      res.json({ ok: true, ordersImported, productsCreated, contactsCreated, rowsSkipped });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

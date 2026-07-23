@@ -7,6 +7,11 @@ let currentSettings = { staleDays: 3, closingLabels: [], manualClosing: {} };
 let selectedIds = new Set();
 let allProducts = [];
 let editingProductId = null;
+const KONTAK_PAGE_SIZE = 10;
+let kontakPage = 1;
+let allOrders = [];
+const ORDERS_PAGE_SIZE = 10;
+let ordersPage = 1;
 
 const el = (id) => document.getElementById(id);
 
@@ -60,6 +65,18 @@ async function apiDelete(path) {
     throw new Error(data.error || `HTTP ${res.status}`);
   }
   return res.json();
+}
+
+async function apiUploadFile(path, file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  // No Content-Type header here - the browser sets the multipart boundary
+  // itself, setting it manually breaks the upload.
+  const res = await fetch(path, { method: 'POST', headers: authHeaders(), body: formData });
+  if (res.status === 401) throw new Error('unauthorized');
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
 }
 
 function handleApiError(e, fallbackMessage) {
@@ -175,12 +192,28 @@ function renderKontak() {
     if (!matchedIds.has(id)) selectedIds.delete(id);
   });
 
+  matched.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  // Only 10 rows are rendered to the DOM at a time - re-rendering the whole
+  // table (edit/toggle/select, filter change, background refresh) stays fast
+  // even with a large contact list.
+  const totalPages = Math.max(1, Math.ceil(matched.length / KONTAK_PAGE_SIZE));
+  if (kontakPage > totalPages) kontakPage = totalPages;
+  if (kontakPage < 1) kontakPage = 1;
+  const pageStart = (kontakPage - 1) * KONTAK_PAGE_SIZE;
+  const pageItems = matched.slice(pageStart, pageStart + KONTAK_PAGE_SIZE);
+
+  el('kontakPageInfo').textContent = matched.length > 0
+    ? `Halaman ${kontakPage} dari ${totalPages} (${matched.length} kontak)`
+    : '';
+  el('kontakPrevBtn').disabled = kontakPage <= 1;
+  el('kontakNextBtn').disabled = kontakPage >= totalPages;
+
   const tbody = el('chatTableBody');
   tbody.innerHTML = '';
   el('emptyState').classList.toggle('hidden', matched.length > 0);
 
-  matched
-    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+  pageItems
     .forEach((chat) => {
       const leadDate = leadDateExact(chat);
       const display = leadDate
@@ -315,8 +348,16 @@ async function loadData() {
 
 // ---- Products ----
 
+// weight in gram, volume in cm3, length/width/height in cm - all optional,
+// unlike name/price which every product needs.
+const PRODUCT_DIM_FIELDS = ['weight', 'volume', 'length', 'width', 'height'];
+
 function formatRupiah(price) {
   return `Rp ${Number(price || 0).toLocaleString('id-ID')}`;
+}
+
+function formatDim(value) {
+  return value === undefined || value === null || value === '' ? '-' : Number(value).toLocaleString('id-ID');
 }
 
 function renderProductsTable() {
@@ -330,18 +371,24 @@ function renderProductsTable() {
     .forEach((product) => {
       const tr = document.createElement('tr');
       if (editingProductId === product.id) {
+        const dimInputs = PRODUCT_DIM_FIELDS
+          .map((field) => `<td><input type="number" class="edit-product-${field}" min="0" value="${escapeHtml(product[field] ?? '')}" /></td>`)
+          .join('');
         tr.innerHTML = `
           <td><input type="text" class="edit-product-name" value="${escapeHtml(product.name)}" /></td>
           <td><input type="number" class="edit-product-price" min="0" value="${escapeHtml(product.price)}" /></td>
+          ${dimInputs}
           <td>
             <button class="save-product-btn" data-id="${escapeHtml(product.id)}">Simpan</button>
             <button class="cancel-product-btn">Batal</button>
           </td>
         `;
       } else {
+        const dimCells = PRODUCT_DIM_FIELDS.map((field) => `<td>${escapeHtml(formatDim(product[field]))}</td>`).join('');
         tr.innerHTML = `
           <td>${escapeHtml(product.name)}</td>
           <td>${escapeHtml(formatRupiah(product.price))}</td>
+          ${dimCells}
           <td>
             <button class="edit-product-btn" data-id="${escapeHtml(product.id)}">Edit</button>
             <button class="delete-product-btn" data-id="${escapeHtml(product.id)}">Hapus</button>
@@ -381,6 +428,10 @@ async function loadProducts() {
   }
 }
 
+function capitalize(str) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
 async function addProduct() {
   const name = el('newProductName').value.trim();
   const price = el('newProductPrice').value;
@@ -389,10 +440,16 @@ async function addProduct() {
     el('productFormMsg').textContent = 'Isi nama produk dan harga jual.';
     return;
   }
+  const dims = {};
+  PRODUCT_DIM_FIELDS.forEach((field) => {
+    const val = el(`newProduct${capitalize(field)}`).value;
+    if (val !== '') dims[field] = Number(val);
+  });
   try {
-    await apiPost('/api/products', { name, price: Number(price) });
+    await apiPost('/api/products', { name, price: Number(price), ...dims });
     el('newProductName').value = '';
     el('newProductPrice').value = '';
+    PRODUCT_DIM_FIELDS.forEach((field) => { el(`newProduct${capitalize(field)}`).value = ''; });
     await loadProducts();
   } catch (e) {
     if (e.message === 'unauthorized') {
@@ -410,8 +467,13 @@ async function saveProductEdit(id, tbody) {
     window.alert('Isi nama produk dan harga jual.');
     return;
   }
+  const dims = {};
+  PRODUCT_DIM_FIELDS.forEach((field) => {
+    const val = tbody.querySelector(`.edit-product-${field}`).value;
+    if (val !== '') dims[field] = Number(val);
+  });
   try {
-    await apiPut(`/api/products/${id}`, { name, price: Number(price) });
+    await apiPut(`/api/products/${id}`, { name, price: Number(price), ...dims });
     editingProductId = null;
     await loadProducts();
   } catch (e) {
@@ -426,6 +488,98 @@ async function deleteProduct(id) {
     await loadProducts();
   } catch (e) {
     handleApiError(e, 'Gagal menghapus produk.');
+  }
+}
+
+// ---- Orders (Pesanan) ----
+
+function renderOrdersTable() {
+  const sorted = allOrders.slice().sort((a, b) => {
+    const ta = a.createdDate ? new Date(a.createdDate).getTime() : 0;
+    const tb = b.createdDate ? new Date(b.createdDate).getTime() : 0;
+    return tb - ta;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / ORDERS_PAGE_SIZE));
+  if (ordersPage > totalPages) ordersPage = totalPages;
+  if (ordersPage < 1) ordersPage = 1;
+  const pageStart = (ordersPage - 1) * ORDERS_PAGE_SIZE;
+  const pageItems = sorted.slice(pageStart, pageStart + ORDERS_PAGE_SIZE);
+
+  el('ordersPageInfo').textContent = sorted.length > 0
+    ? `Halaman ${ordersPage} dari ${totalPages} (${sorted.length} pesanan)`
+    : '';
+  el('ordersPrevBtn').disabled = ordersPage <= 1;
+  el('ordersNextBtn').disabled = ordersPage >= totalPages;
+
+  const tbody = el('ordersTableBody');
+  tbody.innerHTML = '';
+  el('ordersEmptyState').classList.toggle('hidden', sorted.length > 0);
+
+  pageItems.forEach((order) => {
+    const dateDisplay = order.createdDate
+      ? new Date(order.createdDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '-';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(order.id)}</td>
+      <td>${escapeHtml(dateDisplay)}</td>
+      <td>${escapeHtml(order.customerName || '-')}</td>
+      <td>${escapeHtml(order.customerPhone || '-')}</td>
+      <td>${escapeHtml(order.productName || '-')}</td>
+      <td>${escapeHtml(order.qty ?? '-')}</td>
+      <td>${escapeHtml(formatRupiah(order.price))}</td>
+      <td>${escapeHtml(order.ownerNumber || '-')}</td>
+      <td>${escapeHtml(order.status || '-')}</td>
+      <td>${escapeHtml(order.trackingNumber || '-')}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadOrders() {
+  el('ordersLoadingState').classList.remove('hidden');
+  try {
+    const { orders } = await apiGet('/api/orders');
+    allOrders = orders;
+    renderOrdersTable();
+  } catch (e) {
+    handleApiError(e, 'Gagal memuat daftar pesanan.');
+  } finally {
+    el('ordersLoadingState').classList.add('hidden');
+  }
+}
+
+async function importOrders() {
+  const fileInput = el('orderImportFile');
+  const file = fileInput.files[0];
+  el('orderImportMsg').textContent = '';
+  if (!file) {
+    el('orderImportMsg').textContent = 'Pilih file .xlsx dulu.';
+    return;
+  }
+  el('orderImportBtn').disabled = true;
+  el('orderImportMsg').textContent = 'Mengimpor...';
+  try {
+    const result = await apiUploadFile('/api/orders/import', file);
+    el('orderImportMsg').textContent =
+      `${result.ordersImported} pesanan diimpor, ${result.productsCreated} produk baru, ` +
+      `${result.contactsCreated} kontak baru` +
+      (result.rowsSkipped > 0 ? `, ${result.rowsSkipped} baris dilewati (tanpa nomor HP)` : '') + '.';
+    fileInput.value = '';
+    ordersPage = 1;
+    await loadOrders();
+    // The import can create new products/contacts, so refresh the pages that
+    // list them too - otherwise they'd look stale until manually reloaded.
+    await Promise.all([loadProducts(), loadData()]);
+  } catch (e) {
+    if (e.message === 'unauthorized') {
+      handleApiError(e);
+      return;
+    }
+    el('orderImportMsg').textContent = e.message || 'Gagal mengimpor file.';
+  } finally {
+    el('orderImportBtn').disabled = false;
   }
 }
 
@@ -500,8 +654,10 @@ function switchPage(page) {
   el('dashboardPage').classList.toggle('hidden', page !== 'dashboard');
   el('kontakPage').classList.toggle('hidden', page !== 'kontak');
   el('produkPage').classList.toggle('hidden', page !== 'produk');
+  el('pesananPage').classList.toggle('hidden', page !== 'pesanan');
   el('usersPage').classList.toggle('hidden', page !== 'users');
   if (page === 'produk') loadProducts();
+  if (page === 'pesanan') loadOrders();
   if (page === 'users') loadUsers();
 }
 
@@ -569,9 +725,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   el('addUserBtn').addEventListener('click', addUser);
   el('addProductBtn').addEventListener('click', addProduct);
+  el('orderImportBtn').addEventListener('click', importOrders);
 
   el('refreshBtn').addEventListener('click', loadData);
   el('dashRefreshBtn').addEventListener('click', loadData);
+  el('ordersRefreshBtn').addEventListener('click', loadOrders);
+
+  el('ordersPrevBtn').addEventListener('click', () => {
+    ordersPage -= 1;
+    renderOrdersTable();
+  });
+  el('ordersNextBtn').addEventListener('click', () => {
+    ordersPage += 1;
+    renderOrdersTable();
+  });
 
   el('dashFilterMode').addEventListener('change', () => {
     syncFilterVisibility(DASH_IDS, { single: 'dashFilterSingleWrap', range: 'dashFilterRangeWrap' });
@@ -583,10 +750,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   el('filterMode').addEventListener('change', () => {
     syncFilterVisibility(KONTAK_IDS, { single: 'filterSingleWrap', range: 'filterRangeWrap' });
+    kontakPage = 1;
     renderKontak();
   });
   ['filterOwner', 'filterSingle', 'filterFrom', 'filterTo', 'searchBox'].forEach((id) => {
-    el(id).addEventListener('input', renderKontak);
+    el(id).addEventListener('input', () => {
+      kontakPage = 1;
+      renderKontak();
+    });
+  });
+
+  el('kontakPrevBtn').addEventListener('click', () => {
+    kontakPage -= 1;
+    renderKontak();
+  });
+  el('kontakNextBtn').addEventListener('click', () => {
+    kontakPage += 1;
+    renderKontak();
   });
 
   el('selectAllCheckbox').addEventListener('change', () => {

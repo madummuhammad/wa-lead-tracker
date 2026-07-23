@@ -34,6 +34,9 @@
         <button class="nav-link" data-page="produk">
           <span class="nav-icon">▤</span> Produk
         </button>
+        <button class="nav-link" data-page="pesanan">
+          <span class="nav-icon">▧</span> Pesanan
+        </button>
         <button class="nav-link hidden" id="usersNavBtn" data-page="users">
           <span class="nav-icon">⚙</span> Pengaturan User
         </button>
@@ -162,6 +165,12 @@
           <div id="emptyState" class="notice hidden">Tidak ada chat yang cocok filter ini.</div>
           <div id="loadingState" class="notice hidden">Memuat data dari MongoDB...</div>
         </section>
+
+        <section class="pagination">
+          <button id="kontakPrevBtn" class="btn-outline">‹ Sebelumnya</button>
+          <span id="kontakPageInfo" class="pagination-info"></span>
+          <button id="kontakNextBtn" class="btn-outline">Berikutnya ›</button>
+        </section>
       </section>
 
       <!-- ================= PRODUK PAGE ================= -->
@@ -175,23 +184,84 @@
           <div class="user-form">
             <input type="text" id="newProductName" placeholder="Nama produk" />
             <input type="number" id="newProductPrice" placeholder="Harga jual" min="0" />
+            <input type="number" id="newProductWeight" placeholder="Berat (gram)" min="0" />
+            <input type="number" id="newProductVolume" placeholder="Volume (cm³)" min="0" />
+            <input type="number" id="newProductLength" placeholder="Panjang (cm)" min="0" />
+            <input type="number" id="newProductWidth" placeholder="Lebar (cm)" min="0" />
+            <input type="number" id="newProductHeight" placeholder="Tinggi (cm)" min="0" />
             <button id="addProductBtn">Tambah</button>
           </div>
           <p id="productFormMsg" class="error-msg"></p>
         </section>
 
-        <section class="table-wrap">
+        <section class="table-wrap scroll-x">
           <table id="productsTable">
             <thead>
               <tr>
                 <th>Nama Produk</th>
                 <th>Harga Jual</th>
+                <th>Berat (gram)</th>
+                <th>Volume (cm³)</th>
+                <th>Panjang (cm)</th>
+                <th>Lebar (cm)</th>
+                <th>Tinggi (cm)</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="productsTableBody"></tbody>
           </table>
           <div id="productsEmptyState" class="notice hidden">Belum ada produk.</div>
+        </section>
+      </section>
+
+      <!-- ================= PESANAN PAGE ================= -->
+      <section id="pesananPage" class="page hidden">
+        <header class="page-header">
+          <h1>Pesanan</h1>
+          <button id="ordersRefreshBtn" class="btn-outline" title="Ambil data terbaru dari MongoDB">⟳ Muat Ulang</button>
+        </header>
+
+        <section class="block">
+          <h2>Impor Pesanan dari Excel</h2>
+          <p class="hint">
+            File .xlsx hasil ekspor pesanan. Produk baru yang belum ada di
+            katalog otomatis ditambahkan (hanya namanya - harga diisi manual
+            nanti di halaman Produk). Kontak baru yang belum ada juga otomatis
+            ditambahkan dan ditandai Closing, kecuali pesanannya Dibatalkan.
+          </p>
+          <div class="user-form">
+            <input type="file" id="orderImportFile" accept=".xlsx" />
+            <button id="orderImportBtn">Impor</button>
+          </div>
+          <p id="orderImportMsg" class="hint"></p>
+        </section>
+
+        <section class="table-wrap scroll-x">
+          <table id="ordersTable">
+            <thead>
+              <tr>
+                <th>No. Order</th>
+                <th>Tanggal</th>
+                <th>Penerima</th>
+                <th>No. HP</th>
+                <th>Produk</th>
+                <th>Jumlah</th>
+                <th>Harga</th>
+                <th>Akun WA</th>
+                <th>Status</th>
+                <th>Resi</th>
+              </tr>
+            </thead>
+            <tbody id="ordersTableBody"></tbody>
+          </table>
+          <div id="ordersEmptyState" class="notice hidden">Belum ada pesanan.</div>
+          <div id="ordersLoadingState" class="notice hidden">Memuat data dari MongoDB...</div>
+        </section>
+
+        <section class="pagination">
+          <button id="ordersPrevBtn" class="btn-outline">‹ Sebelumnya</button>
+          <span id="ordersPageInfo" class="pagination-info"></span>
+          <button id="ordersNextBtn" class="btn-outline">Berikutnya ›</button>
         </section>
       </section>
 

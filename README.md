@@ -28,8 +28,46 @@ Without the header (or with a wrong key) this should return `401`.
 - `PUT /api/chats` - upsert, body is `{ [id]: {...} }` (same shape as GET returns)
 - `GET /api/settings` - `{ settings: {...} }`
 - `PUT /api/settings` - upsert, body is the settings object directly
+- `GET /api/products`, `POST /api/products`, `PUT /api/products/:id`, `DELETE /api/products/:id` - product catalog CRUD
+- `GET /api/orders` - all imported orders, `{ orders: [...] }`
+- `POST /api/orders/import` - multipart upload, field name `file`, an .xlsx order export (see below)
 
 All routes under `/api` require `Authorization: Bearer <API_KEY>`.
+
+### Order import (`POST /api/orders/import`)
+
+Parses the COD fulfillment platform's order export (columns: `No. Order`,
+`Pengiriman`, `Kurir`, `Penerima`, `No. HP Penerima`, `Alamat`, `Kota
+penerima`, `Produk`, `Berat`, `Jumlah`, `Volume`, `Ongkos Kirim`, `Diskon
+COD`, `Biaya COD`, `Harga Produk`, `Nilai COD`, `Status`, `Resi`, `Tanggal
+Dibuat`, `Tanggal Diterima`, `Catatan`, `Kode Referensi`, `Status
+Rekonsiliasi`, `Nama Admin Gudang`, `Nomor Admin Gudang`, `Zipcode`) and
+upserts one `Order` document per row, keyed by `No. Order` - re-importing an
+overlapping export updates existing rows (e.g. picks up a status change)
+instead of duplicating them.
+
+Side effects per row, by design (not just parsing):
+- **Product**: matched by exact name against the `Product` catalog. If it
+  doesn't exist yet, it's created with *only* the name - price/dimensions are
+  left blank for the admin to fill in later on the Produk page. The order's
+  own `price` is a separate, per-order snapshot (see below), never written
+  back to the catalog.
+- **Contact**: matched by phone (`Chat._id`) against existing contacts. If
+  new, it's created with `firstMessageDate` set to the order's `Tanggal
+  Dibuat`, and `manualClosing: true` unless the order's `Status` is
+  `Dibatalkan` - a real order counts as a conversion regardless of shipping
+  status. An *existing* contact gets the same closing flip only if it isn't
+  already marked closing (never overwrites label-based closing or an earlier
+  manual mark).
+- **Nomor Admin Gudang → ownerNumber**: the export uses a 62-prefixed format
+  (`6285726435813`); this system's `ownerNumber` (the Akun WA filter value)
+  is entered 0-prefixed (`085726435813`). The import normalizes 62→0 so
+  imported orders/contacts line up with the existing Akun WA filter instead
+  of silently creating a second, unfiltered "account".
+- **Price**: `Harga Produk` is blank in every row of the real export this was
+  built against - the actual per-order value lives in `Nilai COD` instead.
+  `price` prefers `Harga Produk` when present and falls back to `Nilai COD`,
+  so a future export that does populate it takes precedence.
 
 ### Note on `manualClosing`
 
