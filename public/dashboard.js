@@ -268,6 +268,7 @@ async function toggleClosing(chatId) {
   if (!chat) return;
   const current = chat.manualClosing === true || (currentSettings.manualClosing && currentSettings.manualClosing[chatId] === true);
   chat.manualClosing = !current;
+  chat.manualClosingUpdatedAt = new Date().toISOString();
   try {
     await apiPut('/api/chats', { [chatId]: chat });
     renderAll();

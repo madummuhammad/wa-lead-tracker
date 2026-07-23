@@ -15,6 +15,10 @@ const chatSchema = new mongoose.Schema(
     // global settings blob would get wholesale replaced by whichever device
     // pushed last, silently wiping the other device's closing marks.
     manualClosing: Boolean,
+    // Stamped only when manualClosing is explicitly toggled (never touched by
+    // routine scan merges), so pullFromBackend can tell whose closing mark is
+    // actually newer instead of whichever device happened to sync/scan last.
+    manualClosingUpdatedAt: String,
     firstMessageDate: String,
     firstSeenAt: String,
     labels: { type: [String], default: [] },

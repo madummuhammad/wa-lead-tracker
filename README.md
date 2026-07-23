@@ -42,6 +42,16 @@ multiple WA accounts/devices sharing the same MongoDB. `Settings.manualClosing`
 still exists for backward compatibility with old extension versions but is
 only read as a fallback, never written to by current code.
 
+The extension's pull merge normally lets local data win per chat id (it never
+wants a stale server copy to clobber this device's own scan results). But
+that meant `manualClosing` from one device could never reach another device
+that already has the same chat locally (true for every chat on a shared WA
+account). `Chat.manualClosingUpdatedAt` exists to fix that: it's stamped only
+when a user explicitly toggles closing (never by routine scanning), so the
+extension can compare that one field's timestamp across local/remote and
+take whichever side changed it more recently, independent of every other
+field on the chat.
+
 ## Structure
 
 - `server/app.js` - `createApp()`, the Express app (routes + middleware), no `listen()` call
