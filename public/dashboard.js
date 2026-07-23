@@ -8,6 +8,12 @@ let selectedIds = new Set();
 
 const el = (id) => document.getElementById(id);
 
+// Two independent filter bars share the same date/owner logic: the Dashboard
+// page's filter only slices the stat cards, the Kontak page's filter (plus
+// search) drives the table - they're intentionally not linked to each other.
+const DASH_IDS = { owner: 'dashFilterOwner', mode: 'dashFilterMode', single: 'dashFilterSingle', from: 'dashFilterFrom', to: 'dashFilterTo' };
+const KONTAK_IDS = { owner: 'filterOwner', mode: 'filterMode', single: 'filterSingle', from: 'filterFrom', to: 'filterTo' };
+
 function authHeaders(extra = {}) {
   return { Authorization: `Bearer ${token}`, ...extra };
 }
@@ -39,9 +45,7 @@ async function apiPost(path, body) {
   if (res.status === 401) throw new Error('unauthorized');
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    const err = new Error(data.error || `HTTP ${res.status}`);
-    err.status = res.status;
-    throw err;
+    throw new Error(data.error || `HTTP ${res.status}`);
   }
   return res.json();
 }
@@ -63,9 +67,6 @@ function handleApiError(e, fallbackMessage) {
   }
   window.alert(fallbackMessage || String(e));
 }
-
-// ---- Dashboard logic (unchanged from the extension's version, just backed
-// by fetch() to the API instead of chrome.storage.local) ----
 
 function leadDateExact(chat) {
   return chat.firstMessageDate || null;
@@ -100,46 +101,39 @@ function escapeHtml(str) {
   }[c]));
 }
 
-function currentFilter() {
+function readFilterState(ids) {
   return {
-    mode: el('filterMode').value,
-    single: el('filterSingle').value,
-    from: el('filterFrom').value,
-    to: el('filterTo').value,
+    owner: el(ids.owner).value,
+    mode: el(ids.mode).value,
+    single: el(ids.single).value,
+    from: el(ids.from).value,
+    to: el(ids.to).value,
   };
 }
 
-function syncFilterVisibility() {
-  const mode = el('filterMode').value;
-  el('filterSingle').closest('.filter-single').style.display = mode === 'single' ? 'flex' : 'none';
-  el('filterFrom').closest('.filter-range').style.display = mode === 'range' ? 'flex' : 'none';
+function syncFilterVisibility(ids, wrapIds) {
+  const mode = el(ids.mode).value;
+  el(wrapIds.single).style.display = mode === 'single' ? 'flex' : 'none';
+  el(wrapIds.range).style.display = mode === 'range' ? 'flex' : 'none';
 }
 
-function populateOwnerFilter() {
-  const select = el('filterOwner');
+function populateOwnerSelect(select) {
   const owners = Array.from(new Set(Object.values(allChats).map((c) => c.ownerNumber).filter(Boolean))).sort();
   const previousValue = select.value || 'all';
-
   select.innerHTML = '<option value="all">Semua akun</option>' +
     owners.map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
-
   select.value = owners.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
 }
 
-function render() {
-  populateOwnerFilter();
+// ---- Dashboard page: stat cards only ----
 
-  const filter = currentFilter();
-  const q = el('searchBox').value.trim().toLowerCase();
-  const ownerFilter = el('filterOwner').value;
+function renderDashboard() {
+  populateOwnerSelect(el(DASH_IDS.owner));
+  const filter = readFilterState(DASH_IDS);
 
   const matched = Object.values(allChats).filter((chat) => {
-    if (ownerFilter !== 'all' && (chat.ownerNumber || '') !== ownerFilter) return false;
+    if (filter.owner !== 'all' && (chat.ownerNumber || '') !== filter.owner) return false;
     if (!matchesDateFilter(chat, filter)) return false;
-    if (q) {
-      const hay = `${chat.name || ''} ${chat.phone || ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
     return true;
   });
 
@@ -150,6 +144,24 @@ function render() {
   el('statTotal').textContent = totalLead;
   el('statClosing').textContent = closingCount;
   el('statRate').textContent = `${rate}%`;
+}
+
+// ---- Kontak page: full table ----
+
+function renderKontak() {
+  populateOwnerSelect(el(KONTAK_IDS.owner));
+  const filter = readFilterState(KONTAK_IDS);
+  const q = el('searchBox').value.trim().toLowerCase();
+
+  const matched = Object.values(allChats).filter((chat) => {
+    if (filter.owner !== 'all' && (chat.ownerNumber || '') !== filter.owner) return false;
+    if (!matchesDateFilter(chat, filter)) return false;
+    if (q) {
+      const hay = `${chat.name || ''} ${chat.phone || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
 
   const matchedIds = new Set(matched.map((c) => c.id));
   Array.from(selectedIds).forEach((id) => {
@@ -206,6 +218,11 @@ function render() {
   updateSelectionUi();
 }
 
+function renderAll() {
+  renderDashboard();
+  renderKontak();
+}
+
 function updateSelectionUi() {
   const count = selectedIds.size;
   el('deleteSelectedBtn').disabled = count === 0;
@@ -235,7 +252,7 @@ async function editDateManually(chatId) {
   chat.firstMessageDate = parsed.toISOString();
   try {
     await apiPut('/api/chats', { [chatId]: chat });
-    render();
+    renderAll();
   } catch (e) {
     handleApiError(e, 'Gagal menyimpan tanggal.');
   }
@@ -245,7 +262,7 @@ async function toggleClosing(chatId) {
   currentSettings.manualClosing[chatId] = !currentSettings.manualClosing[chatId];
   try {
     await apiPut('/api/settings', currentSettings);
-    render();
+    renderAll();
   } catch (e) {
     handleApiError(e, 'Gagal menyimpan status closing.');
   }
@@ -260,13 +277,14 @@ async function deleteSelected() {
     await apiPost('/api/chats/delete', { ids });
     ids.forEach((id) => delete allChats[id]);
     selectedIds.clear();
-    render();
+    renderAll();
   } catch (e) {
     handleApiError(e, 'Gagal menghapus data.');
   }
 }
 
 async function loadData() {
+  el('dashLoadingState').classList.remove('hidden');
   el('loadingState').classList.remove('hidden');
   try {
     const [{ chats = {} }, { settings: rawSettings = {} }] = await Promise.all([
@@ -275,10 +293,11 @@ async function loadData() {
     ]);
     allChats = chats;
     currentSettings = { staleDays: 3, closingLabels: [], manualClosing: {}, ...rawSettings };
-    render();
+    renderAll();
   } catch (e) {
     handleApiError(e, 'Gagal memuat data dari server.');
   } finally {
+    el('dashLoadingState').classList.add('hidden');
     el('loadingState').classList.add('hidden');
   }
 }
@@ -347,13 +366,14 @@ async function deleteUser(id) {
   }
 }
 
-// ---- Tabs ----
+// ---- Sidebar navigation ----
 
-function switchTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tab));
-  el('dashboardTab').classList.toggle('hidden', tab !== 'dashboard');
-  el('usersTab').classList.toggle('hidden', tab !== 'users');
-  if (tab === 'users') loadUsers();
+function switchPage(page) {
+  document.querySelectorAll('.nav-link').forEach((btn) => btn.classList.toggle('active', btn.dataset.page === page));
+  el('dashboardPage').classList.toggle('hidden', page !== 'dashboard');
+  el('kontakPage').classList.toggle('hidden', page !== 'kontak');
+  el('usersPage').classList.toggle('hidden', page !== 'users');
+  if (page === 'users') loadUsers();
 }
 
 // ---- Auth screens ----
@@ -378,8 +398,8 @@ async function showAppScreen() {
   el('loginScreen').classList.add('hidden');
   el('app').classList.remove('hidden');
   el('whoami').textContent = `${me.email} (${me.role})`;
-  el('usersTabBtn').classList.toggle('hidden', me.role !== 'admin');
-  switchTab('dashboard');
+  el('usersNavBtn').classList.toggle('hidden', me.role !== 'admin');
+  switchPage('dashboard');
   await loadData();
 }
 
@@ -415,20 +435,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   el('logoutBtn').addEventListener('click', () => showLoginScreen());
 
-  document.querySelectorAll('.tab-btn').forEach((btn) => {
-    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  document.querySelectorAll('.nav-link').forEach((btn) => {
+    btn.addEventListener('click', () => switchPage(btn.dataset.page));
   });
   el('addUserBtn').addEventListener('click', addUser);
 
   el('refreshBtn').addEventListener('click', loadData);
+  el('dashRefreshBtn').addEventListener('click', loadData);
+
+  el('dashFilterMode').addEventListener('change', () => {
+    syncFilterVisibility(DASH_IDS, { single: 'dashFilterSingleWrap', range: 'dashFilterRangeWrap' });
+    renderDashboard();
+  });
+  ['dashFilterOwner', 'dashFilterSingle', 'dashFilterFrom', 'dashFilterTo'].forEach((id) => {
+    el(id).addEventListener('input', renderDashboard);
+  });
 
   el('filterMode').addEventListener('change', () => {
-    syncFilterVisibility();
-    render();
+    syncFilterVisibility(KONTAK_IDS, { single: 'filterSingleWrap', range: 'filterRangeWrap' });
+    renderKontak();
   });
-  el('filterOwner').addEventListener('change', render);
-  ['filterSingle', 'filterFrom', 'filterTo', 'searchBox'].forEach((id) => {
-    el(id).addEventListener('input', render);
+  ['filterOwner', 'filterSingle', 'filterFrom', 'filterTo', 'searchBox'].forEach((id) => {
+    el(id).addEventListener('input', renderKontak);
   });
 
   el('selectAllCheckbox').addEventListener('change', () => {
@@ -442,7 +470,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   el('deleteSelectedBtn').addEventListener('click', deleteSelected);
 
-  syncFilterVisibility();
+  syncFilterVisibility(DASH_IDS, { single: 'dashFilterSingleWrap', range: 'dashFilterRangeWrap' });
+  syncFilterVisibility(KONTAK_IDS, { single: 'filterSingleWrap', range: 'filterRangeWrap' });
 
   const storedToken = localStorage.getItem(TOKEN_STORAGE);
   if (storedToken) {
