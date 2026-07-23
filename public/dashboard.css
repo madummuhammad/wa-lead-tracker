@@ -335,6 +335,38 @@ tbody tr:hover { background: #fafcfb; }
 }
 .edit-btn:hover { color: var(--brand); }
 
+.edit-product-btn, .save-product-btn, .cancel-product-btn {
+  font-size: 11px;
+  cursor: pointer;
+  border: 1px solid #d1d7db;
+  background: white;
+  border-radius: 6px;
+  padding: 3px 8px;
+  margin-right: 4px;
+}
+.edit-product-btn:hover, .save-product-btn:hover, .cancel-product-btn:hover { background: var(--brand-tint); }
+
+.delete-product-btn {
+  border: 1px solid var(--danger);
+  background: white;
+  color: var(--danger);
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.delete-product-btn:hover { background: var(--danger-tint); }
+
+.edit-product-name, .edit-product-price {
+  padding: 6px 8px;
+  border: 1px solid #d1d7db;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .notice {
   padding: 24px;
   text-align: center;

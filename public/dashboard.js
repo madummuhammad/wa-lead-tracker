@@ -5,6 +5,8 @@ let currentUser = null; // { email, role, userId }
 let allChats = {};
 let currentSettings = { staleDays: 3, closingLabels: [], manualClosing: {} };
 let selectedIds = new Set();
+let allProducts = [];
+let editingProductId = null;
 
 const el = (id) => document.getElementById(id);
 
@@ -311,6 +313,122 @@ async function loadData() {
   }
 }
 
+// ---- Products ----
+
+function formatRupiah(price) {
+  return `Rp ${Number(price || 0).toLocaleString('id-ID')}`;
+}
+
+function renderProductsTable() {
+  const tbody = el('productsTableBody');
+  tbody.innerHTML = '';
+  el('productsEmptyState').classList.toggle('hidden', allProducts.length > 0);
+
+  allProducts
+    .slice()
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    .forEach((product) => {
+      const tr = document.createElement('tr');
+      if (editingProductId === product.id) {
+        tr.innerHTML = `
+          <td><input type="text" class="edit-product-name" value="${escapeHtml(product.name)}" /></td>
+          <td><input type="number" class="edit-product-price" min="0" value="${escapeHtml(product.price)}" /></td>
+          <td>
+            <button class="save-product-btn" data-id="${escapeHtml(product.id)}">Simpan</button>
+            <button class="cancel-product-btn">Batal</button>
+          </td>
+        `;
+      } else {
+        tr.innerHTML = `
+          <td>${escapeHtml(product.name)}</td>
+          <td>${escapeHtml(formatRupiah(product.price))}</td>
+          <td>
+            <button class="edit-product-btn" data-id="${escapeHtml(product.id)}">Edit</button>
+            <button class="delete-product-btn" data-id="${escapeHtml(product.id)}">Hapus</button>
+          </td>
+        `;
+      }
+      tbody.appendChild(tr);
+    });
+
+  tbody.querySelectorAll('.edit-product-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      editingProductId = btn.dataset.id;
+      renderProductsTable();
+    });
+  });
+  tbody.querySelectorAll('.cancel-product-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      editingProductId = null;
+      renderProductsTable();
+    });
+  });
+  tbody.querySelectorAll('.save-product-btn').forEach((btn) => {
+    btn.addEventListener('click', () => saveProductEdit(btn.dataset.id, tbody));
+  });
+  tbody.querySelectorAll('.delete-product-btn').forEach((btn) => {
+    btn.addEventListener('click', () => deleteProduct(btn.dataset.id));
+  });
+}
+
+async function loadProducts() {
+  try {
+    const { products } = await apiGet('/api/products');
+    allProducts = products;
+    renderProductsTable();
+  } catch (e) {
+    handleApiError(e, 'Gagal memuat daftar produk.');
+  }
+}
+
+async function addProduct() {
+  const name = el('newProductName').value.trim();
+  const price = el('newProductPrice').value;
+  el('productFormMsg').textContent = '';
+  if (!name || price === '') {
+    el('productFormMsg').textContent = 'Isi nama produk dan harga jual.';
+    return;
+  }
+  try {
+    await apiPost('/api/products', { name, price: Number(price) });
+    el('newProductName').value = '';
+    el('newProductPrice').value = '';
+    await loadProducts();
+  } catch (e) {
+    if (e.message === 'unauthorized') {
+      handleApiError(e);
+      return;
+    }
+    el('productFormMsg').textContent = e.message || 'Gagal menambah produk.';
+  }
+}
+
+async function saveProductEdit(id, tbody) {
+  const name = tbody.querySelector('.edit-product-name').value.trim();
+  const price = tbody.querySelector('.edit-product-price').value;
+  if (!name || price === '') {
+    window.alert('Isi nama produk dan harga jual.');
+    return;
+  }
+  try {
+    await apiPut(`/api/products/${id}`, { name, price: Number(price) });
+    editingProductId = null;
+    await loadProducts();
+  } catch (e) {
+    handleApiError(e, 'Gagal menyimpan produk.');
+  }
+}
+
+async function deleteProduct(id) {
+  if (!confirm('Hapus produk ini? Tindakan ini tidak bisa dibatalkan.')) return;
+  try {
+    await apiDelete(`/api/products/${id}`);
+    await loadProducts();
+  } catch (e) {
+    handleApiError(e, 'Gagal menghapus produk.');
+  }
+}
+
 // ---- User management (admin only) ----
 
 function renderUsersTable(users) {
@@ -381,7 +499,9 @@ function switchPage(page) {
   document.querySelectorAll('.nav-link').forEach((btn) => btn.classList.toggle('active', btn.dataset.page === page));
   el('dashboardPage').classList.toggle('hidden', page !== 'dashboard');
   el('kontakPage').classList.toggle('hidden', page !== 'kontak');
+  el('produkPage').classList.toggle('hidden', page !== 'produk');
   el('usersPage').classList.toggle('hidden', page !== 'users');
+  if (page === 'produk') loadProducts();
   if (page === 'users') loadUsers();
 }
 
@@ -448,6 +568,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btn.addEventListener('click', () => switchPage(btn.dataset.page));
   });
   el('addUserBtn').addEventListener('click', addUser);
+  el('addProductBtn').addEventListener('click', addProduct);
 
   el('refreshBtn').addEventListener('click', loadData);
   el('dashRefreshBtn').addEventListener('click', loadData);

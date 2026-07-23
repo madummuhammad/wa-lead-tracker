@@ -31,6 +31,9 @@
         <button class="nav-link" data-page="kontak">
           <span class="nav-icon">☰</span> Kontak
         </button>
+        <button class="nav-link" data-page="produk">
+          <span class="nav-icon">▤</span> Produk
+        </button>
         <button class="nav-link hidden" id="usersNavBtn" data-page="users">
           <span class="nav-icon">⚙</span> Pengaturan User
         </button>
@@ -158,6 +161,37 @@
           </table>
           <div id="emptyState" class="notice hidden">Tidak ada chat yang cocok filter ini.</div>
           <div id="loadingState" class="notice hidden">Memuat data dari MongoDB...</div>
+        </section>
+      </section>
+
+      <!-- ================= PRODUK PAGE ================= -->
+      <section id="produkPage" class="page hidden">
+        <header class="page-header">
+          <h1>Produk</h1>
+        </header>
+
+        <section class="block">
+          <h2>Tambah Produk Baru</h2>
+          <div class="user-form">
+            <input type="text" id="newProductName" placeholder="Nama produk" />
+            <input type="number" id="newProductPrice" placeholder="Harga jual" min="0" />
+            <button id="addProductBtn">Tambah</button>
+          </div>
+          <p id="productFormMsg" class="error-msg"></p>
+        </section>
+
+        <section class="table-wrap">
+          <table id="productsTable">
+            <thead>
+              <tr>
+                <th>Nama Produk</th>
+                <th>Harga Jual</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="productsTableBody"></tbody>
+          </table>
+          <div id="productsEmptyState" class="notice hidden">Belum ada produk.</div>
         </section>
       </section>
 

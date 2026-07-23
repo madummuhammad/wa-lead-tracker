@@ -8,6 +8,7 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 const Chat = require('../models/Chat');
 const Settings = require('../models/Settings');
 const User = require('../models/User');
+const Product = require('../models/Product');
 
 const TOKEN_EXPIRY = '30d'; // personal tool, favor not re-logging-in over short-lived tokens
 
@@ -152,6 +153,66 @@ function createApp() {
       }
       const result = await Chat.deleteMany({ _id: { $in: ids } });
       res.json({ ok: true, deletedCount: result.deletedCount });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // ---- Products ----
+
+  app.get('/api/products', requireAuth, async (req, res) => {
+    try {
+      const docs = await Product.find({}).sort({ name: 1 }).lean();
+      const products = docs.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }));
+      res.json({ products });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post('/api/products', requireAuth, async (req, res) => {
+    try {
+      const { name, price } = req.body || {};
+      if (!name || typeof name !== 'string' || !name.trim()) {
+        return res.status(400).json({ error: 'name is required' });
+      }
+      const priceNum = Number(price);
+      if (!Number.isFinite(priceNum) || priceNum < 0) {
+        return res.status(400).json({ error: 'price must be a non-negative number' });
+      }
+      const product = await Product.create({ name: name.trim(), price: priceNum });
+      res.json({ ok: true, product: { id: product._id, name: product.name, price: product.price } });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.put('/api/products/:id', requireAuth, async (req, res) => {
+    try {
+      const { name, price } = req.body || {};
+      if (!name || typeof name !== 'string' || !name.trim()) {
+        return res.status(400).json({ error: 'name is required' });
+      }
+      const priceNum = Number(price);
+      if (!Number.isFinite(priceNum) || priceNum < 0) {
+        return res.status(400).json({ error: 'price must be a non-negative number' });
+      }
+      const product = await Product.findByIdAndUpdate(
+        req.params.id,
+        { name: name.trim(), price: priceNum },
+        { new: true }
+      ).lean();
+      if (!product) return res.status(404).json({ error: 'product not found' });
+      res.json({ ok: true, product: { id: product._id, name: product.name, price: product.price } });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.delete('/api/products/:id', requireAuth, async (req, res) => {
+    try {
+      await Product.findByIdAndDelete(req.params.id);
+      res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
