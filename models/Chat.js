@@ -8,6 +8,7 @@ const chatSchema = new mongoose.Schema(
     _id: { type: String, required: true },
     name: String,
     phone: String,
+    ownerNumber: String,
     firstMessageDate: String,
     firstSeenAt: String,
     labels: { type: [String], default: [] },
