@@ -68,6 +68,66 @@ body {
   font-size: 12px;
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+}
+.tab-btn {
+  border: 1px solid #d1d7db;
+  background: white;
+  color: #54656f;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.tab-btn.active {
+  background: #128c7e;
+  color: white;
+  border-color: #128c7e;
+}
+
+.tab-panel.hidden { display: none !important; }
+
+.user-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.user-form input, .user-form select {
+  padding: 6px 8px;
+  border: 1px solid #d1d7db;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.user-form button {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  background: #128c7e;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.delete-user-btn {
+  border: 1px solid #c0392b;
+  background: white;
+  color: #c0392b;
+  padding: 3px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
 .filters {
   display: flex;
   flex-wrap: wrap;

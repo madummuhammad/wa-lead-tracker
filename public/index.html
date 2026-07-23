@@ -9,8 +9,9 @@
   <section id="loginScreen" class="login-screen hidden">
     <div class="login-box">
       <h1>WA Lead Tracker</h1>
-      <p class="hint">Masukkan API Key backend (sama dengan <code>API_KEY</code> di <code>.env</code>).</p>
-      <input type="password" id="loginApiKey" placeholder="API Key" />
+      <p class="hint">Masuk dengan akun Anda.</p>
+      <input type="email" id="loginEmail" placeholder="Email" autocomplete="username" />
+      <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" />
       <button id="loginBtn">Masuk</button>
       <p id="loginError" class="error-msg"></p>
     </div>
@@ -18,78 +19,117 @@
 
   <div id="app" class="hidden">
     <header class="topbar">
-      <h1>WA Lead Tracker — Dashboard</h1>
-      <button id="logoutBtn" class="logout-btn">Keluar</button>
+      <h1>WA Lead Tracker</h1>
+      <nav class="tabs">
+        <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+        <button class="tab-btn hidden" id="usersTabBtn" data-tab="users">Pengaturan User</button>
+      </nav>
+      <div class="topbar-right">
+        <span id="whoami" class="hint"></span>
+        <button id="logoutBtn" class="logout-btn">Keluar</button>
+      </div>
     </header>
 
-    <section class="filters">
-      <label>Akun WA
-        <select id="filterOwner">
-          <option value="all">Semua akun</option>
-        </select>
-      </label>
-      <label>Filter Tanggal
-        <select id="filterMode">
-          <option value="all">Semua waktu</option>
-          <option value="single">Tanggal tunggal</option>
-          <option value="range">Rentang tanggal</option>
-          <option value="no-date">Belum ada tanggal lead</option>
-        </select>
-      </label>
-      <span class="filter-single">
-        <label>Tanggal
-          <input type="date" id="filterSingle" />
+    <section id="dashboardTab" class="tab-panel">
+      <section class="filters">
+        <label>Akun WA
+          <select id="filterOwner">
+            <option value="all">Semua akun</option>
+          </select>
         </label>
-      </span>
-      <span class="filter-range">
-        <label>Dari
-          <input type="date" id="filterFrom" />
+        <label>Filter Tanggal
+          <select id="filterMode">
+            <option value="all">Semua waktu</option>
+            <option value="single">Tanggal tunggal</option>
+            <option value="range">Rentang tanggal</option>
+            <option value="no-date">Belum ada tanggal lead</option>
+          </select>
         </label>
-        <label>Sampai
-          <input type="date" id="filterTo" />
-        </label>
-      </span>
-      <input type="search" id="searchBox" placeholder="Cari nama / nomor..." />
-      <button id="refreshBtn" title="Ambil data terbaru dari MongoDB">Muat Ulang</button>
+        <span class="filter-single">
+          <label>Tanggal
+            <input type="date" id="filterSingle" />
+          </label>
+        </span>
+        <span class="filter-range">
+          <label>Dari
+            <input type="date" id="filterFrom" />
+          </label>
+          <label>Sampai
+            <input type="date" id="filterTo" />
+          </label>
+        </span>
+        <input type="search" id="searchBox" placeholder="Cari nama / nomor..." />
+        <button id="refreshBtn" title="Ambil data terbaru dari MongoDB">Muat Ulang</button>
+      </section>
+
+      <section class="stats">
+        <div class="stat-card">
+          <div class="stat-value" id="statTotal">0</div>
+          <div class="stat-label">Chat Masuk</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statClosing">0</div>
+          <div class="stat-label">Closing</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statRate">0%</div>
+          <div class="stat-label">Closing Rate</div>
+        </div>
+      </section>
+
+      <section class="bulk-actions">
+        <span id="selectedCount"></span>
+        <button id="deleteSelectedBtn" class="danger" disabled>Hapus yang Dipilih</button>
+      </section>
+
+      <section class="table-wrap">
+        <table id="chatTable">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="selectAllCheckbox" title="Pilih semua" /></th>
+              <th>Nama</th>
+              <th>Nomor</th>
+              <th>Akun WA</th>
+              <th>Tanggal Lead</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="chatTableBody"></tbody>
+        </table>
+        <div id="emptyState" class="notice hidden">Tidak ada chat yang cocok filter ini.</div>
+        <div id="loadingState" class="notice hidden">Memuat data dari MongoDB...</div>
+      </section>
     </section>
 
-    <section class="stats">
-      <div class="stat-card">
-        <div class="stat-value" id="statTotal">0</div>
-        <div class="stat-label">Chat Masuk</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="statClosing">0</div>
-        <div class="stat-label">Closing</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="statRate">0%</div>
-        <div class="stat-label">Closing Rate</div>
-      </div>
-    </section>
+    <section id="usersTab" class="tab-panel hidden">
+      <section class="block">
+        <h2>Tambah User Baru</h2>
+        <div class="user-form">
+          <input type="email" id="newUserEmail" placeholder="Email" />
+          <input type="password" id="newUserPassword" placeholder="Password (min 6 karakter)" />
+          <select id="newUserRole">
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button id="addUserBtn">Tambah</button>
+        </div>
+        <p id="userFormMsg" class="error-msg"></p>
+      </section>
 
-    <section class="bulk-actions">
-      <span id="selectedCount"></span>
-      <button id="deleteSelectedBtn" class="danger" disabled>Hapus yang Dipilih</button>
-    </section>
-
-    <section class="table-wrap">
-      <table id="chatTable">
-        <thead>
-          <tr>
-            <th><input type="checkbox" id="selectAllCheckbox" title="Pilih semua" /></th>
-            <th>Nama</th>
-            <th>Nomor</th>
-            <th>Akun WA</th>
-            <th>Tanggal Lead</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="chatTableBody"></tbody>
-      </table>
-      <div id="emptyState" class="notice hidden">Tidak ada chat yang cocok filter ini.</div>
-      <div id="loadingState" class="notice hidden">Memuat data dari MongoDB...</div>
+      <section class="table-wrap">
+        <table id="usersTable">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Dibuat</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="usersTableBody"></tbody>
+        </table>
+      </section>
     </section>
   </div>
 

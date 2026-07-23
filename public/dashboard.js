@@ -1,6 +1,7 @@
-const API_KEY_STORAGE = 'waLeadApiKey';
+const TOKEN_STORAGE = 'waLeadToken';
 
-let apiKey = null;
+let token = null;
+let currentUser = null; // { email, role, userId }
 let allChats = {};
 let currentSettings = { staleDays: 3, closingLabels: [], manualClosing: {} };
 let selectedIds = new Set();
@@ -8,7 +9,7 @@ let selectedIds = new Set();
 const el = (id) => document.getElementById(id);
 
 function authHeaders(extra = {}) {
-  return { Authorization: `Bearer ${apiKey}`, ...extra };
+  return { Authorization: `Bearer ${token}`, ...extra };
 }
 
 async function apiGet(path) {
@@ -36,9 +37,35 @@ async function apiPost(path, body) {
     body: JSON.stringify(body),
   });
   if (res.status === 401) throw new Error('unauthorized');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
+
+async function apiDelete(path) {
+  const res = await fetch(path, { method: 'DELETE', headers: authHeaders() });
+  if (res.status === 401) throw new Error('unauthorized');
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+function handleApiError(e, fallbackMessage) {
+  if (e && e.message === 'unauthorized') {
+    showLoginScreen('Sesi berakhir, silakan masuk lagi.');
+    return;
+  }
+  window.alert(fallbackMessage || String(e));
+}
+
+// ---- Dashboard logic (unchanged from the extension's version, just backed
+// by fetch() to the API instead of chrome.storage.local) ----
 
 function leadDateExact(chat) {
   return chat.firstMessageDate || null;
@@ -239,14 +266,6 @@ async function deleteSelected() {
   }
 }
 
-function handleApiError(e, fallbackMessage) {
-  if (e && e.message === 'unauthorized') {
-    showLoginScreen('API Key tidak valid atau ditolak server. Coba masuk lagi.');
-    return;
-  }
-  window.alert(fallbackMessage || String(e));
-}
-
 async function loadData() {
   el('loadingState').classList.remove('hidden');
   try {
@@ -264,46 +283,143 @@ async function loadData() {
   }
 }
 
+// ---- User management (admin only) ----
+
+function renderUsersTable(users) {
+  const tbody = el('usersTableBody');
+  tbody.innerHTML = '';
+  users.forEach((u) => {
+    const created = u.createdAt ? new Date(u.createdAt).toLocaleDateString('id-ID') : '-';
+    const isSelf = currentUser && u._id === currentUser.userId;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(u.email)}</td>
+      <td>${escapeHtml(u.role)}</td>
+      <td>${escapeHtml(created)}</td>
+      <td>${isSelf ? '' : `<button class="delete-user-btn" data-id="${escapeHtml(u._id)}">Hapus</button>`}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+  tbody.querySelectorAll('.delete-user-btn').forEach((btn) => {
+    btn.addEventListener('click', () => deleteUser(btn.dataset.id));
+  });
+}
+
+async function loadUsers() {
+  try {
+    const { users } = await apiGet('/api/users');
+    renderUsersTable(users);
+  } catch (e) {
+    handleApiError(e, 'Gagal memuat daftar user.');
+  }
+}
+
+async function addUser() {
+  const email = el('newUserEmail').value.trim();
+  const password = el('newUserPassword').value;
+  const role = el('newUserRole').value;
+  el('userFormMsg').textContent = '';
+  if (!email || !password) {
+    el('userFormMsg').textContent = 'Isi email dan password.';
+    return;
+  }
+  try {
+    await apiPost('/api/users', { email, password, role });
+    el('newUserEmail').value = '';
+    el('newUserPassword').value = '';
+    await loadUsers();
+  } catch (e) {
+    if (e.message === 'unauthorized') {
+      handleApiError(e);
+      return;
+    }
+    el('userFormMsg').textContent = e.message || 'Gagal menambah user.';
+  }
+}
+
+async function deleteUser(id) {
+  if (!confirm('Hapus user ini? Tindakan ini tidak bisa dibatalkan.')) return;
+  try {
+    await apiDelete(`/api/users/${id}`);
+    await loadUsers();
+  } catch (e) {
+    handleApiError(e, 'Gagal menghapus user.');
+  }
+}
+
+// ---- Tabs ----
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tab));
+  el('dashboardTab').classList.toggle('hidden', tab !== 'dashboard');
+  el('usersTab').classList.toggle('hidden', tab !== 'users');
+  if (tab === 'users') loadUsers();
+}
+
+// ---- Auth screens ----
+
 function showLoginScreen(errorMessage) {
-  localStorage.removeItem(API_KEY_STORAGE);
-  apiKey = null;
+  localStorage.removeItem(TOKEN_STORAGE);
+  token = null;
+  currentUser = null;
   el('app').classList.add('hidden');
   el('loginScreen').classList.remove('hidden');
   el('loginError').textContent = errorMessage || '';
-  el('loginApiKey').value = '';
-  el('loginApiKey').focus();
+  el('loginPassword').value = '';
+  el('loginEmail').focus();
 }
 
 async function showAppScreen() {
+  // Validate before revealing the app, so an expired/invalid token bounces
+  // straight back to the login screen instead of flashing the dashboard first.
+  const me = await apiGet('/api/auth/me');
+  currentUser = me;
+
   el('loginScreen').classList.add('hidden');
   el('app').classList.remove('hidden');
+  el('whoami').textContent = `${me.email} (${me.role})`;
+  el('usersTabBtn').classList.toggle('hidden', me.role !== 'admin');
+  switchTab('dashboard');
   await loadData();
 }
 
-async function tryLogin(key) {
-  apiKey = key;
+async function tryLogin(email, password) {
   try {
-    await apiGet('/api/chats');
-    localStorage.setItem(API_KEY_STORAGE, key);
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      el('loginError').textContent = data.error === 'invalid credentials' ? 'Email atau password salah.' : (data.error || 'Login gagal.');
+      return;
+    }
+    token = data.token;
+    localStorage.setItem(TOKEN_STORAGE, token);
     await showAppScreen();
   } catch (e) {
-    apiKey = null;
-    el('loginError').textContent = e.message === 'unauthorized'
-      ? 'API Key salah.'
-      : `Gagal menghubungi server: ${e.message}`;
+    el('loginError').textContent = `Gagal menghubungi server: ${e.message}`;
   }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
   el('loginBtn').addEventListener('click', () => {
-    const key = el('loginApiKey').value.trim();
-    if (!key) return;
-    tryLogin(key);
+    const email = el('loginEmail').value.trim();
+    const password = el('loginPassword').value;
+    if (!email || !password) return;
+    tryLogin(email, password);
   });
-  el('loginApiKey').addEventListener('keydown', (e) => {
+  el('loginPassword').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') el('loginBtn').click();
   });
   el('logoutBtn').addEventListener('click', () => showLoginScreen());
+
+  document.querySelectorAll('.tab-btn').forEach((btn) => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+  el('addUserBtn').addEventListener('click', addUser);
+
   el('refreshBtn').addEventListener('click', loadData);
 
   el('filterMode').addEventListener('change', () => {
@@ -328,9 +444,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   syncFilterVisibility();
 
-  const storedKey = localStorage.getItem(API_KEY_STORAGE);
-  if (storedKey) {
-    apiKey = storedKey;
+  const storedToken = localStorage.getItem(TOKEN_STORAGE);
+  if (storedToken) {
+    token = storedToken;
     try {
       await showAppScreen();
     } catch (e) {
