@@ -73,8 +73,13 @@ function leadDateExact(chat) {
 }
 
 function isClosing(chat) {
+  // manualClosing lives on the chat record itself, not in settings - two
+  // devices/accounts marking different chats stay additive (upsert by id)
+  // instead of one device's whole settings push wiping another's marks.
+  // The settings.manualClosing[id] check is a fallback for marks set before
+  // this moved.
   const byLabel = (chat.labels || []).some((l) => (currentSettings.closingLabels || []).includes(l));
-  const manual = currentSettings.manualClosing && currentSettings.manualClosing[chat.id] === true;
+  const manual = chat.manualClosing === true || (currentSettings.manualClosing && currentSettings.manualClosing[chat.id] === true);
   return byLabel || manual;
 }
 
@@ -259,9 +264,12 @@ async function editDateManually(chatId) {
 }
 
 async function toggleClosing(chatId) {
-  currentSettings.manualClosing[chatId] = !currentSettings.manualClosing[chatId];
+  const chat = allChats[chatId];
+  if (!chat) return;
+  const current = chat.manualClosing === true || (currentSettings.manualClosing && currentSettings.manualClosing[chatId] === true);
+  chat.manualClosing = !current;
   try {
-    await apiPut('/api/settings', currentSettings);
+    await apiPut('/api/chats', { [chatId]: chat });
     renderAll();
   } catch (e) {
     handleApiError(e, 'Gagal menyimpan status closing.');

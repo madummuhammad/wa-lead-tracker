@@ -9,6 +9,12 @@ const chatSchema = new mongoose.Schema(
     name: String,
     phone: String,
     ownerNumber: String,
+    // Lives on the chat record (not in the shared Settings doc) on purpose:
+    // per-chat data syncs additively (upsert by _id), so two devices/accounts
+    // marking different chats as closing never overwrite each other. A
+    // global settings blob would get wholesale replaced by whichever device
+    // pushed last, silently wiping the other device's closing marks.
+    manualClosing: Boolean,
     firstMessageDate: String,
     firstSeenAt: String,
     labels: { type: [String], default: [] },

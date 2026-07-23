@@ -31,6 +31,17 @@ Without the header (or with a wrong key) this should return `401`.
 
 All routes under `/api` require `Authorization: Bearer <API_KEY>`.
 
+### Note on `manualClosing`
+
+Manual "Tandai Closing" marks are stored per-chat (`Chat.manualClosing`), not
+in the shared `Settings` document. `Settings` is a single global doc that
+gets wholesale-replaced on every push, so if a per-device field like this
+lived there, one device's sync would silently overwrite another device's
+marks. Chats sync additively (upsert by `_id`), so per-chat is safe across
+multiple WA accounts/devices sharing the same MongoDB. `Settings.manualClosing`
+still exists for backward compatibility with old extension versions but is
+only read as a fallback, never written to by current code.
+
 ## Structure
 
 - `server/app.js` - `createApp()`, the Express app (routes + middleware), no `listen()` call
