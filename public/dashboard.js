@@ -1133,14 +1133,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   el('preOrderLincahImportOpenBtn').addEventListener('click', openPreOrderLincahImportModal);
   el('preOrderLincahImportCloseBtn').addEventListener('click', closePreOrderLincahImportModal);
 
-  // Clicking the dimmed backdrop (not the modal box itself) closes it too.
+  // Clicking the dimmed backdrop (not the modal box itself) closes it too -
+  // but only if the whole gesture (mousedown *and* click) started and ended
+  // on the backdrop. Selecting text inside the form can end a drag outside
+  // the modal box (e.g. onto the backdrop), which makes the resulting click
+  // event's target resolve to the overlay even though the user never meant
+  // to click outside - checking click alone closed the modal on every such
+  // selection.
   [
     ['preOrderFormModal', closePreOrderFormModal],
     ['preOrderImportModal', closePreOrderImportModal],
     ['preOrderLincahImportModal', closePreOrderLincahImportModal],
   ].forEach(([modalId, closeFn]) => {
-    el(modalId).addEventListener('click', (e) => {
-      if (e.target.id === modalId) closeFn();
+    const overlay = el(modalId);
+    let mouseDownOnBackdrop = false;
+    overlay.addEventListener('mousedown', (e) => {
+      mouseDownOnBackdrop = e.target === overlay;
+    });
+    overlay.addEventListener('click', (e) => {
+      if (mouseDownOnBackdrop && e.target === overlay) closeFn();
+      mouseDownOnBackdrop = false;
     });
   });
 
