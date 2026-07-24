@@ -37,6 +37,9 @@
         <button class="nav-link" data-page="pesanan">
           <span class="nav-icon">▧</span> Pesanan
         </button>
+        <button class="nav-link" data-page="praPesanan">
+          <span class="nav-icon">▥</span> Pra-Pesanan
+        </button>
         <button class="nav-link hidden" id="usersNavBtn" data-page="users">
           <span class="nav-icon">⚙</span> Pengaturan User
         </button>
@@ -236,10 +239,25 @@
           <p id="orderImportMsg" class="hint"></p>
         </section>
 
+        <section class="filters">
+          <label>Filter Status
+            <select id="orderFilterStatus">
+              <option value="all">Semua Status</option>
+            </select>
+          </label>
+          <input type="search" id="orderSearchBox" placeholder="Cari nama / no. HP / no. resi..." />
+        </section>
+
+        <section class="bulk-actions">
+          <span id="ordersSelectedCount"></span>
+          <button id="ordersDeleteSelectedBtn" class="danger" disabled>Hapus yang Dipilih</button>
+        </section>
+
         <section class="table-wrap scroll-x">
           <table id="ordersTable">
             <thead>
               <tr>
+                <th><input type="checkbox" id="ordersSelectAllCheckbox" title="Pilih semua" /></th>
                 <th>No. Order</th>
                 <th>Tanggal</th>
                 <th>Penerima</th>
@@ -250,6 +268,7 @@
                 <th>Akun WA</th>
                 <th>Status</th>
                 <th>Resi</th>
+                <th></th>
               </tr>
             </thead>
             <tbody id="ordersTableBody"></tbody>
@@ -263,6 +282,210 @@
           <span id="ordersPageInfo" class="pagination-info"></span>
           <button id="ordersNextBtn" class="btn-outline">Berikutnya ›</button>
         </section>
+      </section>
+
+      <!-- ================= PRA-PESANAN PAGE ================= -->
+      <section id="praPesananPage" class="page hidden">
+        <header class="page-header">
+          <h1>Pra-Pesanan</h1>
+          <div class="page-header-actions">
+            <button id="preOrderAddOpenBtn" class="btn-primary">+ Tambah Pra-Pesanan</button>
+            <button id="preOrderImportOpenBtn" class="btn-outline">Impor Data Order</button>
+            <button id="preOrderLincahImportOpenBtn" class="btn-outline">Impor dari Lincah</button>
+            <button id="preOrdersRefreshBtn" class="btn-outline" title="Ambil data terbaru dari MongoDB">⟳ Muat Ulang</button>
+          </div>
+        </header>
+
+        <section class="bulk-actions">
+          <span id="preOrdersSelectedCount"></span>
+          <button id="preOrdersDeleteSelectedBtn" class="danger" disabled>Hapus yang Dipilih</button>
+        </section>
+
+        <section class="table-wrap scroll-x">
+          <table id="preOrdersTable">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="preOrdersSelectAllCheckbox" title="Pilih semua" /></th>
+                <th>Tanggal Order</th>
+                <th>Nama Customer</th>
+                <th>No HP</th>
+                <th>Produk</th>
+                <th>Qty</th>
+                <th>No Resi</th>
+                <th>Status Order</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="preOrdersTableBody"></tbody>
+          </table>
+          <div id="preOrdersEmptyState" class="notice hidden">Belum ada pra-pesanan.</div>
+          <div id="preOrdersLoadingState" class="notice hidden">Memuat data dari MongoDB...</div>
+        </section>
+
+        <section class="pagination">
+          <button id="preOrdersPrevBtn" class="btn-outline">‹ Sebelumnya</button>
+          <span id="preOrdersPageInfo" class="pagination-info"></span>
+          <button id="preOrdersNextBtn" class="btn-outline">Berikutnya ›</button>
+        </section>
+
+        <!-- Modal: Tambah/Edit Pra-Pesanan -->
+        <div id="preOrderFormModal" class="modal-overlay hidden">
+          <div class="modal-box">
+            <div class="modal-header">
+              <h2 id="preOrderFormTitle">Tambah Pra-Pesanan Baru</h2>
+              <button class="modal-close-btn" id="preOrderFormCloseBtn">&times;</button>
+            </div>
+            <div class="form-section">
+              <h3 class="form-section-title">Data Pelanggan</h3>
+              <div class="form-grid">
+                <label class="form-field">
+                  <span>Tanggal Order</span>
+                  <input type="date" id="preOrderOrderDate" />
+                </label>
+                <label class="form-field">
+                  <span>Nama Customer</span>
+                  <input type="text" id="preOrderCustomerName" />
+                </label>
+                <label class="form-field">
+                  <span>No HP/WA</span>
+                  <input type="text" id="preOrderCustomerPhone" />
+                </label>
+                <label class="form-field form-field-wide">
+                  <span>Alamat Lengkap</span>
+                  <input type="text" id="preOrderAddress" />
+                </label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3 class="form-section-title">Produk &amp; Harga</h3>
+              <div class="form-grid">
+                <label class="form-field">
+                  <span>Produk</span>
+                  <select id="preOrderProductName"></select>
+                </label>
+                <label class="form-field">
+                  <span>Qty</span>
+                  <input type="number" id="preOrderQty" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Harga Satuan</span>
+                  <input type="number" id="preOrderUnitPrice" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Total Harga</span>
+                  <input type="number" id="preOrderTotalPrice" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Ongkir</span>
+                  <input type="number" id="preOrderShippingCost" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Total Tagihan</span>
+                  <input type="number" id="preOrderTotalBill" min="0" />
+                </label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3 class="form-section-title">Pembayaran &amp; Pengiriman</h3>
+              <div class="form-grid">
+                <label class="form-field">
+                  <span>Metode Bayar</span>
+                  <input type="text" id="preOrderPaymentMethod" />
+                </label>
+                <label class="form-field">
+                  <span>Status Bayar</span>
+                  <input type="text" id="preOrderPaymentStatus" />
+                </label>
+                <label class="form-field">
+                  <span>Kurir</span>
+                  <input type="text" id="preOrderCourier" />
+                </label>
+                <label class="form-field">
+                  <span>No Resi</span>
+                  <input type="text" id="preOrderNoResi" />
+                </label>
+                <label class="form-field">
+                  <span>Status Order</span>
+                  <input type="text" id="preOrderStatusOrder" />
+                </label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3 class="form-section-title">Lainnya</h3>
+              <div class="form-grid">
+                <label class="form-field">
+                  <span>Sumber Campaign</span>
+                  <input type="text" id="preOrderCampaignSource" />
+                </label>
+                <label class="form-field form-field-wide">
+                  <span>Catatan</span>
+                  <input type="text" id="preOrderNote" />
+                </label>
+                <label class="form-field">
+                  <span>CTT</span>
+                  <input type="text" id="preOrderCtt" />
+                </label>
+                <div class="form-field">
+                  <span>&nbsp;</span>
+                  <div class="form-checkbox-row">
+                    <label class="checkbox-field"><input type="checkbox" id="preOrderLincah" /> LINCAH</label>
+                    <label class="checkbox-field"><input type="checkbox" id="preOrderAneka" /> ANEKA</label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <p id="preOrderFormMsg" class="error-msg"></p>
+            <div class="modal-actions">
+              <button id="preOrderSaveBtn" class="btn-primary">Tambah</button>
+              <button id="preOrderCancelEditBtn" class="btn-outline">Batal</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal: Impor Data Order (bulk) -->
+        <div id="preOrderImportModal" class="modal-overlay hidden">
+          <div class="modal-box">
+            <div class="modal-header">
+              <h2>Impor Data Order (bulk, dari file tracker)</h2>
+              <button class="modal-close-btn" id="preOrderImportCloseBtn">&times;</button>
+            </div>
+            <p class="hint">
+              File .xlsx dari sheet "Data Order". Hanya menambahkan baris baru -
+              baris dengan nomor HP + produk + tanggal yang sama dengan yang
+              sudah ada dilewati, tidak menimpa/menumpuk.
+            </p>
+            <div class="user-form">
+              <input type="file" id="preOrderImportFile" accept=".xlsx" />
+              <button id="preOrderImportBtn">Impor</button>
+            </div>
+            <p id="preOrderImportMsg" class="hint"></p>
+          </div>
+        </div>
+
+        <!-- Modal: Impor Pesanan dari Lincah -->
+        <div id="preOrderLincahImportModal" class="modal-overlay hidden">
+          <div class="modal-box">
+            <div class="modal-header">
+              <h2>Impor Pesanan dari Lincah (.xlsx)</h2>
+              <button class="modal-close-btn" id="preOrderLincahImportCloseBtn">&times;</button>
+            </div>
+            <p class="hint">
+              Pra-pesanan yang cocok dengan pesanan yang diimpor (lewat No Resi,
+              atau nomor HP + nama produk + tanggal terdekat) otomatis dihapus
+              dari daftar di halaman ini - datanya sudah ada di halaman Pesanan.
+              Yang tidak cocok dibiarkan apa adanya.
+            </p>
+            <div class="user-form">
+              <input type="file" id="preOrderLincahImportFile" accept=".xlsx" />
+              <button id="preOrderLincahImportBtn">Impor</button>
+            </div>
+            <p id="preOrderLincahImportMsg" class="hint"></p>
+          </div>
+        </div>
       </section>
 
       <!-- ================= USERS PAGE ================= -->

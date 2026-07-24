@@ -12,6 +12,11 @@ let kontakPage = 1;
 let allOrders = [];
 const ORDERS_PAGE_SIZE = 10;
 let ordersPage = 1;
+let allPreOrders = [];
+const PREORDERS_PAGE_SIZE = 10;
+let preOrdersPage = 1;
+let selectedOrderIds = new Set();
+let selectedPreOrderIds = new Set();
 
 const el = (id) => document.getElementById(id);
 
@@ -493,11 +498,37 @@ async function deleteProduct(id) {
 
 // ---- Orders (Pesanan) ----
 
+function populateOrderStatusSelect(select) {
+  const statuses = Array.from(new Set(allOrders.map((o) => o.status).filter(Boolean))).sort();
+  const previousValue = select.value || 'all';
+  select.innerHTML = '<option value="all">Semua Status</option>' +
+    statuses.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+  select.value = statuses.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
+}
+
 function renderOrdersTable() {
-  const sorted = allOrders.slice().sort((a, b) => {
+  populateOrderStatusSelect(el('orderFilterStatus'));
+  const statusFilter = el('orderFilterStatus').value;
+  const q = el('orderSearchBox').value.trim().toLowerCase();
+
+  const filtered = allOrders.filter((order) => {
+    if (statusFilter !== 'all' && (order.status || '') !== statusFilter) return false;
+    if (q) {
+      const hay = `${order.customerName || ''} ${order.customerPhone || ''} ${order.trackingNumber || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const sorted = filtered.slice().sort((a, b) => {
     const ta = a.createdDate ? new Date(a.createdDate).getTime() : 0;
     const tb = b.createdDate ? new Date(b.createdDate).getTime() : 0;
     return tb - ta;
+  });
+
+  const currentIds = new Set(sorted.map((o) => o.id));
+  Array.from(selectedOrderIds).forEach((id) => {
+    if (!currentIds.has(id)) selectedOrderIds.delete(id);
   });
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / ORDERS_PAGE_SIZE));
@@ -522,6 +553,7 @@ function renderOrdersTable() {
       : '-';
     const tr = document.createElement('tr');
     tr.innerHTML = `
+      <td><input type="checkbox" class="order-row-checkbox" data-id="${escapeHtml(order.id)}" ${selectedOrderIds.has(order.id) ? 'checked' : ''} /></td>
       <td>${escapeHtml(order.id)}</td>
       <td>${escapeHtml(dateDisplay)}</td>
       <td>${escapeHtml(order.customerName || '-')}</td>
@@ -532,9 +564,58 @@ function renderOrdersTable() {
       <td>${escapeHtml(order.ownerNumber || '-')}</td>
       <td>${escapeHtml(order.status || '-')}</td>
       <td>${escapeHtml(order.trackingNumber || '-')}</td>
+      <td><button class="delete-product-btn delete-order-btn" data-id="${escapeHtml(order.id)}">Hapus</button></td>
     `;
     tbody.appendChild(tr);
   });
+
+  tbody.querySelectorAll('.order-row-checkbox').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedOrderIds.add(cb.dataset.id);
+      else selectedOrderIds.delete(cb.dataset.id);
+      updateOrdersSelectionUi();
+    });
+  });
+  tbody.querySelectorAll('.delete-order-btn').forEach((btn) => {
+    btn.addEventListener('click', () => deleteOrder(btn.dataset.id));
+  });
+
+  updateOrdersSelectionUi();
+}
+
+function updateOrdersSelectionUi() {
+  const count = selectedOrderIds.size;
+  el('ordersDeleteSelectedBtn').disabled = count === 0;
+  el('ordersSelectedCount').textContent = count > 0 ? `${count} dipilih` : '';
+
+  const checkboxes = document.querySelectorAll('.order-row-checkbox');
+  const checkedCount = Array.from(checkboxes).filter((cb) => cb.checked).length;
+  el('ordersSelectAllCheckbox').checked = checkboxes.length > 0 && checkedCount === checkboxes.length;
+  el('ordersSelectAllCheckbox').indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+}
+
+async function deleteOrder(id) {
+  if (!confirm('Hapus pesanan ini? Tindakan ini tidak bisa dibatalkan.')) return;
+  try {
+    await apiDelete(`/api/orders/${id}`);
+    selectedOrderIds.delete(id);
+    await loadOrders();
+  } catch (e) {
+    handleApiError(e, 'Gagal menghapus pesanan.');
+  }
+}
+
+async function deleteSelectedOrders() {
+  const ids = Array.from(selectedOrderIds);
+  if (ids.length === 0) return;
+  if (!confirm(`Hapus ${ids.length} pesanan yang dipilih? Tindakan ini tidak bisa dibatalkan.`)) return;
+  try {
+    await apiPost('/api/orders/delete', { ids });
+    selectedOrderIds.clear();
+    await loadOrders();
+  } catch (e) {
+    handleApiError(e, 'Gagal menghapus pesanan.');
+  }
 }
 
 async function loadOrders() {
@@ -550,36 +631,347 @@ async function loadOrders() {
   }
 }
 
-async function importOrders() {
-  const fileInput = el('orderImportFile');
+// Shared by both the Pesanan page's import controls and the duplicate set on
+// the Pra-Pesanan page (same underlying action - a lincah import moves any
+// matching pre-orders out, so it's genuinely useful to trigger from either
+// page rather than forcing a page switch).
+async function importLincahOrders(ids) {
+  const fileInput = el(ids.file);
   const file = fileInput.files[0];
-  el('orderImportMsg').textContent = '';
+  el(ids.msg).textContent = '';
   if (!file) {
-    el('orderImportMsg').textContent = 'Pilih file .xlsx dulu.';
+    el(ids.msg).textContent = 'Pilih file .xlsx dulu.';
     return;
   }
-  el('orderImportBtn').disabled = true;
-  el('orderImportMsg').textContent = 'Mengimpor...';
+  el(ids.btn).disabled = true;
+  el(ids.msg).textContent = 'Mengimpor...';
   try {
     const result = await apiUploadFile('/api/orders/import', file);
-    el('orderImportMsg').textContent =
+    el(ids.msg).textContent =
       `${result.ordersImported} pesanan diimpor, ${result.productsCreated} produk baru, ` +
       `${result.contactsCreated} kontak baru` +
-      (result.rowsSkipped > 0 ? `, ${result.rowsSkipped} baris dilewati (tanpa nomor HP)` : '') + '.';
+      (result.rowsSkipped > 0 ? `, ${result.rowsSkipped} baris dilewati (tanpa nomor HP)` : '') +
+      (result.preOrdersMoved > 0 ? `, ${result.preOrdersMoved} pra-pesanan dipindahkan ke pesanan` : '') + '.';
     fileInput.value = '';
     ordersPage = 1;
     await loadOrders();
-    // The import can create new products/contacts, so refresh the pages that
-    // list them too - otherwise they'd look stale until manually reloaded.
+    if (ids.modal) el(ids.modal).classList.add('hidden');
+    // The import can create new products/contacts, and can also delete
+    // matching pre-orders server-side - refresh all of them so nothing looks
+    // stale until manually reloaded.
+    await Promise.all([loadProducts(), loadData(), loadPreOrders()]);
+  } catch (e) {
+    if (e.message === 'unauthorized') {
+      handleApiError(e);
+      return;
+    }
+    el(ids.msg).textContent = e.message || 'Gagal mengimpor file.';
+  } finally {
+    el(ids.btn).disabled = false;
+  }
+}
+
+function importOrders() {
+  return importLincahOrders({ file: 'orderImportFile', msg: 'orderImportMsg', btn: 'orderImportBtn' });
+}
+
+function importOrdersFromPreOrderPage() {
+  return importLincahOrders({
+    file: 'preOrderLincahImportFile', msg: 'preOrderLincahImportMsg', btn: 'preOrderLincahImportBtn',
+    modal: 'preOrderLincahImportModal',
+  });
+}
+
+// ---- Pre-Orders (Pra-Pesanan) - full CRUD ----
+
+let editingPreOrderId = null;
+
+// Options come from the Product catalog (same source of truth as the Produk
+// page), not free text - keeps a pre-order's product name matchable against
+// real lincah orders later. Keep an already-picked product selectable even
+// if it was since renamed/deleted in the catalog, so editing never silently
+// discards it.
+function populatePreOrderProductSelect(currentValue) {
+  const select = el('preOrderProductName');
+  const names = Array.from(new Set(allProducts.map((p) => p.name).filter(Boolean))).sort();
+  if (currentValue && !names.includes(currentValue)) names.unshift(currentValue);
+  select.innerHTML = '<option value="">Pilih Produk</option>' +
+    names.map((name) => `<option value="${escapeHtml(name)}" ${name === currentValue ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
+}
+
+// Harga Satuan is pre-filled from the catalog price when a product is
+// picked, but stays a normal editable number field afterward - this order's
+// price can differ (discount, negotiation) from the catalog default.
+function applyPreOrderProductPrice() {
+  const product = allProducts.find((p) => p.name === el('preOrderProductName').value);
+  if (product && product.price !== undefined && product.price !== null) {
+    el('preOrderUnitPrice').value = product.price;
+  }
+}
+
+async function openPreOrderAddModal() {
+  resetPreOrderForm();
+  await loadProducts();
+  populatePreOrderProductSelect('');
+  el('preOrderFormModal').classList.remove('hidden');
+}
+
+function closePreOrderFormModal() {
+  el('preOrderFormModal').classList.add('hidden');
+  resetPreOrderForm();
+}
+
+function openPreOrderImportModal() {
+  el('preOrderImportMsg').textContent = '';
+  el('preOrderImportModal').classList.remove('hidden');
+}
+
+function closePreOrderImportModal() {
+  el('preOrderImportModal').classList.add('hidden');
+}
+
+function openPreOrderLincahImportModal() {
+  el('preOrderLincahImportMsg').textContent = '';
+  el('preOrderLincahImportModal').classList.remove('hidden');
+}
+
+function closePreOrderLincahImportModal() {
+  el('preOrderLincahImportModal').classList.add('hidden');
+}
+
+// [form element id, PreOrder field name] - covers every plain text/number
+// field. orderDate and the two checkboxes are handled separately below.
+const PREORDER_FORM_TEXT_FIELDS = [
+  ['preOrderCustomerName', 'customerName'],
+  ['preOrderCustomerPhone', 'customerPhone'],
+  ['preOrderAddress', 'address'],
+  ['preOrderProductName', 'productName'],
+  ['preOrderQty', 'qty'],
+  ['preOrderUnitPrice', 'unitPrice'],
+  ['preOrderTotalPrice', 'totalPrice'],
+  ['preOrderShippingCost', 'shippingCost'],
+  ['preOrderTotalBill', 'totalBill'],
+  ['preOrderPaymentMethod', 'paymentMethod'],
+  ['preOrderPaymentStatus', 'paymentStatus'],
+  ['preOrderCourier', 'courier'],
+  ['preOrderNoResi', 'noResi'],
+  ['preOrderStatusOrder', 'statusOrder'],
+  ['preOrderCampaignSource', 'campaignSource'],
+  ['preOrderNote', 'note'],
+  ['preOrderCtt', 'ctt'],
+];
+
+function readPreOrderForm() {
+  const body = {};
+  PREORDER_FORM_TEXT_FIELDS.forEach(([elId, key]) => { body[key] = el(elId).value; });
+  body.orderDate = el('preOrderOrderDate').value || undefined;
+  body.lincah = el('preOrderLincah').checked;
+  body.aneka = el('preOrderAneka').checked;
+  return body;
+}
+
+function fillPreOrderForm(preOrder) {
+  PREORDER_FORM_TEXT_FIELDS.forEach(([elId, key]) => { el(elId).value = preOrder[key] ?? ''; });
+  el('preOrderOrderDate').value = preOrder.orderDate ? new Date(preOrder.orderDate).toISOString().slice(0, 10) : '';
+  el('preOrderLincah').checked = preOrder.lincah === true;
+  el('preOrderAneka').checked = preOrder.aneka === true;
+}
+
+function resetPreOrderForm() {
+  PREORDER_FORM_TEXT_FIELDS.forEach(([elId]) => { el(elId).value = ''; });
+  el('preOrderOrderDate').value = '';
+  el('preOrderLincah').checked = false;
+  el('preOrderAneka').checked = false;
+  editingPreOrderId = null;
+  el('preOrderFormTitle').textContent = 'Tambah Pra-Pesanan Baru';
+  el('preOrderSaveBtn').textContent = 'Tambah';
+  el('preOrderFormMsg').textContent = '';
+}
+
+async function startEditPreOrder(id) {
+  const preOrder = allPreOrders.find((p) => p.id === id);
+  if (!preOrder) return;
+  await loadProducts();
+  populatePreOrderProductSelect(preOrder.productName);
+  fillPreOrderForm(preOrder);
+  editingPreOrderId = id;
+  el('preOrderFormTitle').textContent = 'Edit Pra-Pesanan';
+  el('preOrderSaveBtn').textContent = 'Simpan Perubahan';
+  el('preOrderFormMsg').textContent = '';
+  el('preOrderFormModal').classList.remove('hidden');
+}
+
+async function savePreOrder() {
+  const body = readPreOrderForm();
+  if (!body.customerName && !body.customerPhone && !body.productName) {
+    el('preOrderFormMsg').textContent = 'Isi minimal nama, nomor HP, atau produk.';
+    return;
+  }
+  try {
+    if (editingPreOrderId) {
+      await apiPut(`/api/preorders/${editingPreOrderId}`, body);
+    } else {
+      await apiPost('/api/preorders', body);
+    }
+    closePreOrderFormModal();
+    preOrdersPage = 1;
+    await loadPreOrders();
+    // Can create a new product/contact (same as the bulk import path).
     await Promise.all([loadProducts(), loadData()]);
   } catch (e) {
     if (e.message === 'unauthorized') {
       handleApiError(e);
       return;
     }
-    el('orderImportMsg').textContent = e.message || 'Gagal mengimpor file.';
+    el('preOrderFormMsg').textContent = e.message || 'Gagal menyimpan pra-pesanan.';
+  }
+}
+
+async function deletePreOrder(id) {
+  if (!confirm('Hapus pra-pesanan ini? Tindakan ini tidak bisa dibatalkan.')) return;
+  try {
+    await apiDelete(`/api/preorders/${id}`);
+    if (editingPreOrderId === id) resetPreOrderForm();
+    selectedPreOrderIds.delete(id);
+    await loadPreOrders();
+  } catch (e) {
+    handleApiError(e, 'Gagal menghapus pra-pesanan.');
+  }
+}
+
+function renderPreOrdersTable() {
+  const sorted = allPreOrders.slice().sort((a, b) => {
+    const ta = a.orderDate ? new Date(a.orderDate).getTime() : 0;
+    const tb = b.orderDate ? new Date(b.orderDate).getTime() : 0;
+    return tb - ta;
+  });
+
+  const currentIds = new Set(sorted.map((p) => p.id));
+  Array.from(selectedPreOrderIds).forEach((id) => {
+    if (!currentIds.has(id)) selectedPreOrderIds.delete(id);
+  });
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PREORDERS_PAGE_SIZE));
+  if (preOrdersPage > totalPages) preOrdersPage = totalPages;
+  if (preOrdersPage < 1) preOrdersPage = 1;
+  const pageStart = (preOrdersPage - 1) * PREORDERS_PAGE_SIZE;
+  const pageItems = sorted.slice(pageStart, pageStart + PREORDERS_PAGE_SIZE);
+
+  el('preOrdersPageInfo').textContent = sorted.length > 0
+    ? `Halaman ${preOrdersPage} dari ${totalPages} (${sorted.length} pra-pesanan)`
+    : '';
+  el('preOrdersPrevBtn').disabled = preOrdersPage <= 1;
+  el('preOrdersNextBtn').disabled = preOrdersPage >= totalPages;
+
+  const tbody = el('preOrdersTableBody');
+  tbody.innerHTML = '';
+  el('preOrdersEmptyState').classList.toggle('hidden', sorted.length > 0);
+
+  pageItems.forEach((preOrder) => {
+    const dateDisplay = preOrder.orderDate
+      ? new Date(preOrder.orderDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '-';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="checkbox" class="preorder-row-checkbox" data-id="${escapeHtml(preOrder.id)}" ${selectedPreOrderIds.has(preOrder.id) ? 'checked' : ''} /></td>
+      <td>${escapeHtml(dateDisplay)}</td>
+      <td>${escapeHtml(preOrder.customerName || '-')}</td>
+      <td>${escapeHtml(preOrder.customerPhone || '-')}</td>
+      <td>${escapeHtml(preOrder.productName || '-')}</td>
+      <td>${escapeHtml(preOrder.qty ?? '-')}</td>
+      <td>${escapeHtml(preOrder.noResi || '-')}</td>
+      <td>${escapeHtml(preOrder.statusOrder || '-')}</td>
+      <td>
+        <button class="edit-product-btn edit-preorder-btn" data-id="${escapeHtml(preOrder.id)}">Edit</button>
+        <button class="delete-product-btn delete-preorder-btn" data-id="${escapeHtml(preOrder.id)}">Hapus</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll('.preorder-row-checkbox').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedPreOrderIds.add(cb.dataset.id);
+      else selectedPreOrderIds.delete(cb.dataset.id);
+      updatePreOrdersSelectionUi();
+    });
+  });
+  tbody.querySelectorAll('.edit-preorder-btn').forEach((btn) => {
+    btn.addEventListener('click', () => startEditPreOrder(btn.dataset.id));
+  });
+  tbody.querySelectorAll('.delete-preorder-btn').forEach((btn) => {
+    btn.addEventListener('click', () => deletePreOrder(btn.dataset.id));
+  });
+
+  updatePreOrdersSelectionUi();
+}
+
+function updatePreOrdersSelectionUi() {
+  const count = selectedPreOrderIds.size;
+  el('preOrdersDeleteSelectedBtn').disabled = count === 0;
+  el('preOrdersSelectedCount').textContent = count > 0 ? `${count} dipilih` : '';
+
+  const checkboxes = document.querySelectorAll('.preorder-row-checkbox');
+  const checkedCount = Array.from(checkboxes).filter((cb) => cb.checked).length;
+  el('preOrdersSelectAllCheckbox').checked = checkboxes.length > 0 && checkedCount === checkboxes.length;
+  el('preOrdersSelectAllCheckbox').indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+}
+
+async function deleteSelectedPreOrders() {
+  const ids = Array.from(selectedPreOrderIds);
+  if (ids.length === 0) return;
+  if (!confirm(`Hapus ${ids.length} pra-pesanan yang dipilih? Tindakan ini tidak bisa dibatalkan.`)) return;
+  try {
+    await apiPost('/api/preorders/delete', { ids });
+    selectedPreOrderIds.clear();
+    await loadPreOrders();
+  } catch (e) {
+    handleApiError(e, 'Gagal menghapus pra-pesanan.');
+  }
+}
+
+async function loadPreOrders() {
+  el('preOrdersLoadingState').classList.remove('hidden');
+  try {
+    const { preOrders } = await apiGet('/api/preorders');
+    allPreOrders = preOrders;
+    renderPreOrdersTable();
+  } catch (e) {
+    handleApiError(e, 'Gagal memuat daftar pra-pesanan.');
   } finally {
-    el('orderImportBtn').disabled = false;
+    el('preOrdersLoadingState').classList.add('hidden');
+  }
+}
+
+async function importPreOrders() {
+  const fileInput = el('preOrderImportFile');
+  const file = fileInput.files[0];
+  el('preOrderImportMsg').textContent = '';
+  if (!file) {
+    el('preOrderImportMsg').textContent = 'Pilih file .xlsx dulu.';
+    return;
+  }
+  el('preOrderImportBtn').disabled = true;
+  el('preOrderImportMsg').textContent = 'Mengimpor...';
+  try {
+    const result = await apiUploadFile('/api/preorders/import', file);
+    el('preOrderImportMsg').textContent =
+      `${result.added} pra-pesanan baru ditambahkan` +
+      (result.skippedDuplicate > 0 ? `, ${result.skippedDuplicate} dilewati (sudah ada)` : '') + '.';
+    fileInput.value = '';
+    preOrdersPage = 1;
+    await loadPreOrders();
+    closePreOrderImportModal();
+    // Same as manual create - can create a new product/contact.
+    await Promise.all([loadProducts(), loadData()]);
+  } catch (e) {
+    if (e.message === 'unauthorized') {
+      handleApiError(e);
+      return;
+    }
+    el('preOrderImportMsg').textContent = e.message || 'Gagal mengimpor file.';
+  } finally {
+    el('preOrderImportBtn').disabled = false;
   }
 }
 
@@ -655,9 +1047,11 @@ function switchPage(page) {
   el('kontakPage').classList.toggle('hidden', page !== 'kontak');
   el('produkPage').classList.toggle('hidden', page !== 'produk');
   el('pesananPage').classList.toggle('hidden', page !== 'pesanan');
+  el('praPesananPage').classList.toggle('hidden', page !== 'praPesanan');
   el('usersPage').classList.toggle('hidden', page !== 'users');
   if (page === 'produk') loadProducts();
   if (page === 'pesanan') loadOrders();
+  if (page === 'praPesanan') loadPreOrders();
   if (page === 'users') loadUsers();
 }
 
@@ -726,10 +1120,41 @@ document.addEventListener('DOMContentLoaded', async () => {
   el('addUserBtn').addEventListener('click', addUser);
   el('addProductBtn').addEventListener('click', addProduct);
   el('orderImportBtn').addEventListener('click', importOrders);
+  el('preOrderImportBtn').addEventListener('click', importPreOrders);
+  el('preOrderLincahImportBtn').addEventListener('click', importOrdersFromPreOrderPage);
+  el('preOrderSaveBtn').addEventListener('click', savePreOrder);
+  el('preOrderCancelEditBtn').addEventListener('click', closePreOrderFormModal);
+  el('preOrderProductName').addEventListener('change', applyPreOrderProductPrice);
+
+  el('preOrderAddOpenBtn').addEventListener('click', openPreOrderAddModal);
+  el('preOrderFormCloseBtn').addEventListener('click', closePreOrderFormModal);
+  el('preOrderImportOpenBtn').addEventListener('click', openPreOrderImportModal);
+  el('preOrderImportCloseBtn').addEventListener('click', closePreOrderImportModal);
+  el('preOrderLincahImportOpenBtn').addEventListener('click', openPreOrderLincahImportModal);
+  el('preOrderLincahImportCloseBtn').addEventListener('click', closePreOrderLincahImportModal);
+
+  // Clicking the dimmed backdrop (not the modal box itself) closes it too.
+  [
+    ['preOrderFormModal', closePreOrderFormModal],
+    ['preOrderImportModal', closePreOrderImportModal],
+    ['preOrderLincahImportModal', closePreOrderLincahImportModal],
+  ].forEach(([modalId, closeFn]) => {
+    el(modalId).addEventListener('click', (e) => {
+      if (e.target.id === modalId) closeFn();
+    });
+  });
 
   el('refreshBtn').addEventListener('click', loadData);
   el('dashRefreshBtn').addEventListener('click', loadData);
   el('ordersRefreshBtn').addEventListener('click', loadOrders);
+
+  ['orderFilterStatus', 'orderSearchBox'].forEach((id) => {
+    el(id).addEventListener('input', () => {
+      ordersPage = 1;
+      renderOrdersTable();
+    });
+  });
+  el('preOrdersRefreshBtn').addEventListener('click', loadPreOrders);
 
   el('ordersPrevBtn').addEventListener('click', () => {
     ordersPage -= 1;
@@ -738,6 +1163,37 @@ document.addEventListener('DOMContentLoaded', async () => {
   el('ordersNextBtn').addEventListener('click', () => {
     ordersPage += 1;
     renderOrdersTable();
+  });
+
+  el('ordersSelectAllCheckbox').addEventListener('change', () => {
+    const checked = el('ordersSelectAllCheckbox').checked;
+    document.querySelectorAll('.order-row-checkbox').forEach((cb) => {
+      cb.checked = checked;
+      if (checked) selectedOrderIds.add(cb.dataset.id);
+      else selectedOrderIds.delete(cb.dataset.id);
+    });
+    updateOrdersSelectionUi();
+  });
+  el('ordersDeleteSelectedBtn').addEventListener('click', deleteSelectedOrders);
+
+  el('preOrdersSelectAllCheckbox').addEventListener('change', () => {
+    const checked = el('preOrdersSelectAllCheckbox').checked;
+    document.querySelectorAll('.preorder-row-checkbox').forEach((cb) => {
+      cb.checked = checked;
+      if (checked) selectedPreOrderIds.add(cb.dataset.id);
+      else selectedPreOrderIds.delete(cb.dataset.id);
+    });
+    updatePreOrdersSelectionUi();
+  });
+  el('preOrdersDeleteSelectedBtn').addEventListener('click', deleteSelectedPreOrders);
+
+  el('preOrdersPrevBtn').addEventListener('click', () => {
+    preOrdersPage -= 1;
+    renderPreOrdersTable();
+  });
+  el('preOrdersNextBtn').addEventListener('click', () => {
+    preOrdersPage += 1;
+    renderPreOrdersTable();
   });
 
   el('dashFilterMode').addEventListener('change', () => {

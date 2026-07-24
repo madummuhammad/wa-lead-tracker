@@ -1,0 +1,40 @@
+const mongoose = require('mongoose');
+
+// A manually-tracked pre-order (recorded before the order is actually placed
+// on lincah.id), same columns as the "Data Order" tracking sheet. Fully
+// CRUD-managed (see /api/preorders* routes in server/app.js) - bulk import
+// from the sheet is just one way to add rows, not the only way.
+//
+// When a lincah Order import (POST /api/orders/import) finds an Order that
+// matches one of these (by resi, or by phone+product+closest date), this
+// pre-order is deleted - it has "graduated" into a real Order, which already
+// holds the authoritative data, so nothing needs to be copied over. Pre-
+// orders that never find a match are simply left alone indefinitely.
+const preOrderSchema = new mongoose.Schema(
+  {
+    orderDate: Date, // Tanggal Order
+    customerName: String, // Nama Customer
+    customerPhone: String, // No HP/WA, normalized to the same 62-prefixed format as Order.customerPhone
+    address: String, // Alamat Lengkap
+    productName: String, // Produk
+    productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+    qty: Number,
+    unitPrice: Number, // Harga Satuan
+    totalPrice: Number, // Total Harga
+    shippingCost: Number, // Ongkir
+    totalBill: Number, // Total Tagihan
+    paymentMethod: String, // Metode Bayar
+    paymentStatus: String, // Status Bayar
+    courier: String, // Kurir
+    noResi: String, // as typed manually, or as known so far - used to match against a real lincah Order
+    statusOrder: String, // "Status Order" - manual tracking status
+    campaignSource: String, // Sumber Campaign
+    note: String, // Catatan
+    lincah: Boolean, // LINCAH column - exact meaning not confirmed, kept as-is
+    aneka: Boolean, // ANEKA column - exact meaning not confirmed, kept as-is
+    ctt: String, // CTT column - exact meaning not confirmed, kept as-is
+  },
+  { timestamps: true }
+);
+
+module.exports = mongoose.model('PreOrder', preOrderSchema);

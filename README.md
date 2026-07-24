@@ -30,7 +30,12 @@ Without the header (or with a wrong key) this should return `401`.
 - `PUT /api/settings` - upsert, body is the settings object directly
 - `GET /api/products`, `POST /api/products`, `PUT /api/products/:id`, `DELETE /api/products/:id` - product catalog CRUD
 - `GET /api/orders` - all imported orders, `{ orders: [...] }`
+- `DELETE /api/orders/:id` - delete one order
+- `POST /api/orders/delete` - bulk delete, body is `{ ids: [...] }`
 - `POST /api/orders/import` - multipart upload, field name `file`, an .xlsx order export (see below)
+- `GET /api/preorders`, `POST /api/preorders`, `PUT /api/preorders/:id`, `DELETE /api/preorders/:id` - pre-order CRUD
+- `POST /api/preorders/delete` - bulk delete, body is `{ ids: [...] }`
+- `POST /api/preorders/import` - multipart upload, field name `file`, bulk-adds from the manual "Data Order" tracker sheet (see below)
 
 All routes under `/api` require `Authorization: Bearer <API_KEY>`.
 
@@ -68,6 +73,47 @@ Side effects per row, by design (not just parsing):
   built against - the actual per-order value lives in `Nilai COD` instead.
   `price` prefers `Harga Produk` when present and falls back to `Nilai COD`,
   so a future export that does populate it takes precedence.
+- After importing, any existing `PreOrder` that matches one of the imported
+  orders is **deleted** (see `consumeMatchingPreOrders()`) - it has
+  "graduated" into this real Order, which already holds the authoritative
+  data, so there's nothing left to keep it around for. See Pre-Orders below.
+
+### Pre-Orders (Pra-Pesanan)
+
+`PreOrder` is a manually-tracked pre-order - same columns as the "Data Order"
+sheet used *before* an order is actually placed on lincah.id (`orderDate`,
+`customerName`, `customerPhone`, `address`, `productName`, `qty`,
+`unitPrice`, `totalPrice`, `shippingCost`, `totalBill`, `paymentMethod`,
+`paymentStatus`, `courier`, `noResi`, `statusOrder`, `campaignSource`,
+`note`, `lincah`, `aneka`, `ctt`). It's **fully CRUD-managed** via
+`GET`/`POST`/`PUT /:id`/`DELETE /:id` - the bulk `POST /api/preorders/import`
+(the "Data Order" sheet, header auto-detected in the first 5 rows since the
+sheet has a title banner above it) is just one way to add rows, additive and
+deduplicated by phone + product name + order date (the closest thing this
+sheet has to a natural key) so re-importing the same/an overlapping file
+doesn't pile up duplicates - it never touches or replaces existing rows.
+Same Product/Contact auto-create side effects as the Order import (see
+above) apply on both manual create/update and bulk import, except a
+pre-order **never** touches `manualClosing` - it isn't a confirmed
+conversion yet, only the actual dispatched Order represents that.
+
+**Moving to Pesanan on match** (`consumeMatchingPreOrders()` in
+`server/app.js`) is the main point of this feature, run every time
+`POST /api/orders/import` runs (so it also catches pre-orders left
+unmatched by an earlier lincah import, without re-touching the tracker
+sheet at all):
+1. If a `PreOrder.noResi` matches an imported `Order.trackingNumber`, that's
+   an exact, unambiguous match.
+2. Otherwise, fall back to phone + product name (case/whitespace-insensitive),
+   among pre-orders dated on/before the order, picking the closest one -
+   unless there's a tie, which is left alone rather than guessed (a wrong
+   match is worse than none, since a pre-order is just a plan).
+3. A matched `PreOrder` is **deleted**, not updated - the Order already has
+   the authoritative data. Orders with no match, and pre-orders with no
+   match, are both left completely alone; nothing ever guesses.
+`"No HP/WA"` is normalized from whatever format the sheet stores it in (often
+a plain number, which silently drops a leading 0) to the same 62-prefixed
+format `Order.customerPhone` uses, or matching would just never succeed.
 
 ### Note on `manualClosing`
 

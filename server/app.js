@@ -12,9 +12,64 @@ const Settings = require('../models/Settings');
 const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
+const PreOrder = require('../models/PreOrder');
 
 const TOKEN_EXPIRY = '30d'; // personal tool, favor not re-logging-in over short-lived tokens
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+function normalizeMatchName(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+// For each freshly imported/upserted Order, look for an existing PreOrder
+// that represents the same sale and delete it - it has "graduated" into
+// this real Order, which already holds the authoritative data, so nothing
+// needs to be copied over. Matching:
+//   1. Resi match (PreOrder.noResi === Order.trackingNumber) - exact and
+//      unambiguous.
+//   2. Otherwise phone + product name (case/whitespace-insensitive), among
+//      pre-orders dated on/before this order, picking the closest one -
+//      unless there's a tie, which is left alone rather than guessed (a
+//      wrong match is worse than none, since a pre-order is just a plan).
+// Orders with no match, and pre-orders with no match, are both left
+// completely alone - that's the point, not a fallback.
+async function consumeMatchingPreOrders(orders) {
+  const allPreOrders = await PreOrder.find({}).lean();
+  const consumedIds = new Set();
+
+  orders.forEach((order) => {
+    const available = allPreOrders.filter((p) => !consumedIds.has(String(p._id)));
+
+    const resiMatch = order.trackingNumber
+      ? available.find((p) => p.noResi && p.noResi === order.trackingNumber)
+      : null;
+    if (resiMatch) {
+      consumedIds.add(String(resiMatch._id));
+      return;
+    }
+
+    if (!order.customerPhone || !order.productName || !order.createdDate) return;
+    const productKey = normalizeMatchName(order.productName);
+    const candidates = available.filter((p) =>
+      p.customerPhone === order.customerPhone &&
+      normalizeMatchName(p.productName) === productKey &&
+      p.orderDate && new Date(p.orderDate) <= new Date(order.createdDate)
+    );
+    if (candidates.length === 0) return;
+
+    candidates.sort((a, b) => new Date(b.orderDate) - new Date(a.orderDate)); // closest-from-below first
+    const closestGapMs = new Date(order.createdDate) - new Date(candidates[0].orderDate);
+    const tiedClosest = candidates.filter(
+      (c) => new Date(order.createdDate) - new Date(c.orderDate) === closestGapMs
+    );
+    if (tiedClosest.length !== 1) return; // ambiguous - leave alone
+
+    consumedIds.add(String(tiedClosest[0]._id));
+  });
+
+  if (consumedIds.size > 0) await PreOrder.deleteMany({ _id: { $in: Array.from(consumedIds) } });
+  return consumedIds.size;
+}
 
 function createApp() {
   const app = express();
@@ -313,6 +368,28 @@ function createApp() {
     }
   });
 
+  app.delete('/api/orders/:id', requireAuth, async (req, res) => {
+    try {
+      await Order.findByIdAndDelete(req.params.id);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post('/api/orders/delete', requireAuth, async (req, res) => {
+    try {
+      const { ids } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: 'body must be { ids: [...] }' });
+      }
+      const result = await Order.deleteMany({ _id: { $in: ids } });
+      res.json({ ok: true, deletedCount: result.deletedCount });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   app.post('/api/orders/import', requireAuth, upload.single('file'), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'file is required (field name "file")' });
@@ -349,6 +426,7 @@ function createApp() {
       let productsCreated = 0;
       let contactsCreated = 0;
       let rowsSkipped = 0;
+      const importedOrders = []; // fed to consumeMatchingPreOrders() below
 
       for (let r = 2; r <= worksheet.rowCount; r++) {
         const row = worksheet.getRow(r);
@@ -410,6 +488,9 @@ function createApp() {
 
         const volumeRaw = getCell(row, 'Volume');
         const zipcodeRaw = getCell(row, 'Zipcode');
+        const trackingNumber = getCell(row, 'Resi');
+
+        importedOrders.push({ customerPhone, productName, createdDate, trackingNumber });
 
         await Order.findByIdAndUpdate(
           noOrder,
@@ -436,7 +517,7 @@ function createApp() {
               price: numOrUndefined(getCell(row, 'Harga Produk')) ?? numOrUndefined(getCell(row, 'Nilai COD')),
               codValue: numOrUndefined(getCell(row, 'Nilai COD')),
               status,
-              trackingNumber: getCell(row, 'Resi'),
+              trackingNumber,
               createdDate,
               receivedDate: parseIndonesianDate(getCell(row, 'Tanggal Diterima')),
               note: getCell(row, 'Catatan'),
@@ -452,7 +533,293 @@ function createApp() {
         ordersImported++;
       }
 
-      res.json({ ok: true, ordersImported, productsCreated, contactsCreated, rowsSkipped });
+      const preOrdersMoved = await consumeMatchingPreOrders(importedOrders);
+
+      res.json({ ok: true, ordersImported, productsCreated, contactsCreated, rowsSkipped, preOrdersMoved });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // ---- Pre-Orders (Pra-Pesanan - manually tracked, CRUD, before an order is
+  // actually placed on lincah.id) ----
+
+  const PREORDER_REQUIRED_HEADERS = ['Tanggal Order', 'Nama Customer', 'No HP/WA', 'Produk'];
+
+  // "No HP/WA" is often stored as a plain number, which silently drops a
+  // leading 0 (Excel numbers don't have one) - reconstruct the local
+  // 0-prefix before converting to the 62-prefixed format Order.customerPhone
+  // uses, so matching against real lincah orders actually works.
+  function normalizePreOrderPhone(value) {
+    const digits = onlyDigits(value);
+    if (!digits) return '';
+    if (digits.startsWith('62')) return digits;
+    if (digits.startsWith('0')) return `62${digits.slice(1)}`;
+    return `62${digits}`;
+  }
+
+  function preOrderDedupKey(phone, productName, orderDate) {
+    const dateKey = orderDate ? new Date(orderDate).toISOString().slice(0, 10) : '';
+    return `${phone || ''}|${normalizeMatchName(productName)}|${dateKey}`;
+  }
+
+  function serializePreOrder(doc) {
+    const obj = typeof doc.toObject === 'function' ? doc.toObject() : doc;
+    const { _id, __v, ...rest } = obj;
+    return { id: _id, ...rest };
+  }
+
+  // Same Product/Contact auto-create pattern used by the Order import - a
+  // pre-order never touches manualClosing though, since it isn't a confirmed
+  // conversion yet (that's what the actual Order represents).
+  async function resolvePreOrderRefs({ productName, customerPhone, customerName, orderDate }) {
+    let productId;
+    if (productName) {
+      let product = await Product.findOne({ name: productName });
+      if (!product) product = await Product.create({ name: productName });
+      productId = product._id;
+    }
+    if (customerPhone) {
+      const existingChat = await Chat.findById(customerPhone);
+      if (!existingChat) {
+        await Chat.create({
+          _id: customerPhone,
+          name: customerName,
+          phone: customerPhone,
+          firstMessageDate: orderDate ? new Date(orderDate).toISOString() : undefined,
+          firstSeenAt: new Date().toISOString(),
+        });
+      }
+    }
+    return productId;
+  }
+
+  function preOrderFieldsFromBody(body) {
+    return {
+      customerName: body.customerName,
+      address: body.address,
+      qty: numOrUndefined(body.qty),
+      unitPrice: numOrUndefined(body.unitPrice),
+      totalPrice: numOrUndefined(body.totalPrice),
+      shippingCost: numOrUndefined(body.shippingCost),
+      totalBill: numOrUndefined(body.totalBill),
+      paymentMethod: body.paymentMethod,
+      paymentStatus: body.paymentStatus,
+      courier: body.courier,
+      noResi: body.noResi,
+      statusOrder: body.statusOrder,
+      campaignSource: body.campaignSource,
+      note: body.note,
+      lincah: body.lincah === true,
+      aneka: body.aneka === true,
+      ctt: body.ctt,
+    };
+  }
+
+  app.get('/api/preorders', requireAuth, async (req, res) => {
+    try {
+      const docs = await PreOrder.find({}).sort({ orderDate: -1 }).lean();
+      const preOrders = docs.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }));
+      res.json({ preOrders });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post('/api/preorders', requireAuth, async (req, res) => {
+    try {
+      const body = req.body || {};
+      const customerPhone = body.customerPhone ? onlyDigits(body.customerPhone) : undefined;
+      const productName = body.productName ? String(body.productName).trim() : undefined;
+      const orderDate = body.orderDate ? new Date(body.orderDate) : undefined;
+
+      const productId = await resolvePreOrderRefs({
+        productName, customerPhone, customerName: body.customerName, orderDate,
+      });
+
+      const preOrder = await PreOrder.create({
+        ...preOrderFieldsFromBody(body),
+        orderDate,
+        customerPhone,
+        productName,
+        productId,
+      });
+      res.json({ ok: true, preOrder: serializePreOrder(preOrder) });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.put('/api/preorders/:id', requireAuth, async (req, res) => {
+    try {
+      const body = req.body || {};
+      const customerPhone = body.customerPhone ? onlyDigits(body.customerPhone) : undefined;
+      const productName = body.productName ? String(body.productName).trim() : undefined;
+      const orderDate = body.orderDate ? new Date(body.orderDate) : undefined;
+
+      const productId = await resolvePreOrderRefs({
+        productName, customerPhone, customerName: body.customerName, orderDate,
+      });
+
+      const preOrder = await PreOrder.findByIdAndUpdate(
+        req.params.id,
+        { $set: { ...preOrderFieldsFromBody(body), orderDate, customerPhone, productName, productId } },
+        { new: true }
+      );
+      if (!preOrder) return res.status(404).json({ error: 'pre-order not found' });
+      res.json({ ok: true, preOrder: serializePreOrder(preOrder) });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.delete('/api/preorders/:id', requireAuth, async (req, res) => {
+    try {
+      await PreOrder.findByIdAndDelete(req.params.id);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post('/api/preorders/delete', requireAuth, async (req, res) => {
+    try {
+      const { ids } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: 'body must be { ids: [...] }' });
+      }
+      const result = await PreOrder.deleteMany({ _id: { $in: ids } });
+      res.json({ ok: true, deletedCount: result.deletedCount });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post('/api/preorders/import', requireAuth, upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'file is required (field name "file")' });
+
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(req.file.buffer);
+      const worksheet = workbook.getWorksheet('Data Order') || workbook.worksheets[0];
+      if (!worksheet) return res.status(400).json({ error: 'file has no sheets' });
+
+      // The sheet has a title banner above the real header row, so scan the
+      // first few rows for one that actually has all the columns we need,
+      // instead of assuming the header is always row 1.
+      let headerMap = null;
+      let headerRowNumber = null;
+      for (let r = 1; r <= Math.min(5, worksheet.rowCount); r++) {
+        const candidate = {};
+        worksheet.getRow(r).eachCell((cell, col) => {
+          candidate[String(cell.value || '').trim()] = col;
+        });
+        if (PREORDER_REQUIRED_HEADERS.every((h) => candidate[h])) {
+          headerMap = candidate;
+          headerRowNumber = r;
+          break;
+        }
+      }
+      if (!headerMap) {
+        return res.status(400).json({
+          error: `Kolom wajib tidak ditemukan di 5 baris pertama: ${PREORDER_REQUIRED_HEADERS.join(', ')}`,
+        });
+      }
+
+      const getCell = (row, header) => {
+        const col = headerMap[header];
+        if (!col) return undefined;
+        const v = row.getCell(col).value;
+        if (v === null || v === undefined || v === '') return undefined;
+        if (v instanceof Date) return v;
+        if (typeof v === 'object' && 'text' in v) return v.text;
+        if (typeof v === 'object' && 'result' in v) return v.result;
+        return v;
+      };
+
+      // This is one way to *add* pre-orders in bulk, not a mirror of the
+      // sheet - existing rows (CRUD-added or from an earlier import) are
+      // left alone. Dedup against phone + product + order date, the closest
+      // thing this sheet has to a natural key, so re-importing the same or
+      // an overlapping file doesn't pile up duplicates.
+      const existing = await PreOrder.find({}).lean();
+      const existingKeys = new Set(existing.map((p) => preOrderDedupKey(p.customerPhone, p.productName, p.orderDate)));
+
+      const productCache = new Map();
+      const chatCache = new Map();
+      let added = 0;
+      let skippedDuplicate = 0;
+
+      for (let r = headerRowNumber + 1; r <= worksheet.rowCount; r++) {
+        const row = worksheet.getRow(r);
+        const customerName = String(getCell(row, 'Nama Customer') || '').trim();
+        const customerPhone = normalizePreOrderPhone(getCell(row, 'No HP/WA'));
+        const productName = String(getCell(row, 'Produk') || '').trim();
+        if (!customerName && !customerPhone && !productName) continue; // blank/trailing row
+
+        const orderDateRaw = getCell(row, 'Tanggal Order');
+        const orderDate = orderDateRaw instanceof Date ? orderDateRaw : undefined;
+
+        const key = preOrderDedupKey(customerPhone, productName, orderDate);
+        if (existingKeys.has(key)) {
+          skippedDuplicate++;
+          continue;
+        }
+
+        if (customerPhone && productName) {
+          if (!productCache.has(productName)) {
+            let product = await Product.findOne({ name: productName });
+            if (!product) product = await Product.create({ name: productName });
+            productCache.set(productName, product);
+          }
+          if (!chatCache.has(customerPhone)) {
+            let chat = await Chat.findById(customerPhone);
+            if (!chat) {
+              chat = await Chat.create({
+                _id: customerPhone,
+                name: customerName,
+                phone: customerPhone,
+                firstMessageDate: orderDate ? orderDate.toISOString() : undefined,
+                firstSeenAt: new Date().toISOString(),
+              });
+            }
+            chatCache.set(customerPhone, chat);
+          }
+        }
+        const product = productCache.get(productName);
+
+        const noResiRaw = String(getCell(row, 'No Resi') || '').trim();
+        const noResi = noResiRaw.split(/[;,]/).map((s) => s.trim()).filter(Boolean)[0] || undefined;
+        const ctt = getCell(row, 'CTT');
+
+        await PreOrder.create({
+          orderDate,
+          customerName,
+          customerPhone,
+          address: getCell(row, 'Alamat Lengkap'),
+          productName,
+          productId: product ? product._id : undefined,
+          qty: numOrUndefined(getCell(row, 'Qty')),
+          unitPrice: numOrUndefined(getCell(row, 'Harga Satuan')),
+          totalPrice: numOrUndefined(getCell(row, 'Total Harga')),
+          shippingCost: numOrUndefined(getCell(row, 'Ongkir')),
+          totalBill: numOrUndefined(getCell(row, 'Total Tagihan')),
+          paymentMethod: getCell(row, 'Metode Bayar'),
+          paymentStatus: getCell(row, 'Status Bayar'),
+          courier: getCell(row, 'Kurir'),
+          noResi,
+          statusOrder: getCell(row, 'Status Order'),
+          campaignSource: getCell(row, 'Sumber Campaign'),
+          note: getCell(row, 'Catatan'),
+          lincah: getCell(row, 'LINCAH') === true,
+          aneka: getCell(row, 'ANEKA') === true,
+          ctt: ctt !== undefined ? String(ctt) : undefined,
+        });
+        existingKeys.add(key); // guard against duplicate rows within the same file
+        added++;
+      }
+
+      res.json({ ok: true, added, skippedDuplicate });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
