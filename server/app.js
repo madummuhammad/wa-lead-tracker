@@ -939,15 +939,21 @@ function createApp() {
   //
   // Query params (all optional): `from`/`to` (YYYY-MM-DD, inclusive),
   // `ownerNumber`, `productName`, `createdByEmail` - 'all' or omitted means
-  // no filter on that dimension. ownerNumber only affects Chat/Order metrics
-  // (PreOrder has no owner concept, it's tied to a CS creator instead);
-  // createdByEmail only affects PreOrder metrics for the same reason.
+  // no filter on that dimension. `productName` may repeat
+  // (?productName=A&productName=B) to select multiple products at once.
+  // ownerNumber only affects Chat/Order metrics (PreOrder has no owner
+  // concept, it's tied to a CS creator instead); createdByEmail only
+  // affects PreOrder metrics for the same reason.
 
   app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
     try {
       const { from, to } = req.query;
       const ownerNumber = req.query.ownerNumber && req.query.ownerNumber !== 'all' ? req.query.ownerNumber : null;
-      const productName = req.query.productName && req.query.productName !== 'all' ? req.query.productName : null;
+      // productName may be repeated (?productName=A&productName=B) for a
+      // multi-select filter - normalize to an array regardless of how many
+      // values came in; an empty array means "no product filter".
+      const productNames = (Array.isArray(req.query.productName) ? req.query.productName : req.query.productName ? [req.query.productName] : [])
+        .filter((p) => p && p !== 'all');
       const createdByEmail = req.query.createdByEmail && req.query.createdByEmail !== 'all' ? req.query.createdByEmail : null;
 
       const fromTime = from ? new Date(`${from}T00:00:00`).getTime() : null;
@@ -979,16 +985,16 @@ function createApp() {
 
       const filteredChats = chats.filter((c) =>
         (!ownerNumber || (c.ownerNumber || '') === ownerNumber) &&
-        (!productName || (c.product || '') === productName) &&
+        (productNames.length === 0 || productNames.includes(c.product || '')) &&
         withinDateFilter(c.firstMessageDate)
       );
       const filteredOrders = orders.filter((o) =>
         (!ownerNumber || (o.ownerNumber || '') === ownerNumber) &&
-        (!productName || (o.productName || '') === productName) &&
+        (productNames.length === 0 || productNames.includes(o.productName || '')) &&
         withinDateFilter(o.createdDate)
       );
       const filteredPreOrders = preOrders.filter((p) =>
-        (!productName || (p.productName || '') === productName) &&
+        (productNames.length === 0 || productNames.includes(p.productName || '')) &&
         (!createdByEmail || (p.createdByEmail || '') === createdByEmail) &&
         withinDateFilter(p.orderDate)
       );

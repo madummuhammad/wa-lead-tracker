@@ -282,6 +282,58 @@ body {
   margin-top: auto;
 }
 
+/* ---------- Multi-select dropdown (e.g. Dashboard Produk filter) ---------- */
+.multiselect { position: relative; }
+.multiselect-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 170px;
+  padding: 7px 9px;
+  border: 1px solid #d1d7db;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  background: white;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+.multiselect-toggle:after {
+  content: '\25BE';
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+.multiselect-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  min-width: 240px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(17, 27, 33, 0.16);
+  padding: 6px;
+}
+.multiselect-panel.hidden { display: none; }
+.multiselect-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.multiselect-option:hover { background: var(--bg); }
+.multiselect-option input[type="checkbox"] { width: auto; margin: 0; }
+.multiselect-divider { border-top: 1px solid var(--line); margin: 4px 2px; }
+
 /* ---------- Stat cards ---------- */
 .stats {
   display: grid;

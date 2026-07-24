@@ -71,9 +71,10 @@
             </select>
           </label>
           <label>Produk
-            <select id="dashFilterProduct">
-              <option value="all">Semua produk</option>
-            </select>
+            <div class="multiselect" id="dashFilterProductMulti">
+              <button type="button" class="multiselect-toggle" id="dashFilterProductToggle">Semua produk</button>
+              <div class="multiselect-panel hidden" id="dashFilterProductPanel"></div>
+            </div>
           </label>
           <label>CS
             <select id="dashFilterCreator">

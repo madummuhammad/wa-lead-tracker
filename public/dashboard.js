@@ -164,6 +164,41 @@ function populateDashboardFilterSelect(select, options, placeholderLabel) {
   select.value = options.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
 }
 
+// Empty set == "Semua produk" (no filter) - mirrors the 'all' convention
+// used by the other single-select dashboard filters.
+let dashSelectedProducts = new Set();
+
+function updateDashProductToggleLabel() {
+  const btn = el('dashFilterProductToggle');
+  if (dashSelectedProducts.size === 0) {
+    btn.textContent = 'Semua produk';
+  } else if (dashSelectedProducts.size === 1) {
+    btn.textContent = chartTruncate(Array.from(dashSelectedProducts)[0], 22);
+  } else {
+    btn.textContent = `${dashSelectedProducts.size} produk dipilih`;
+  }
+}
+
+function populateDashboardProductPanel(products) {
+  // Drop selections for products that no longer exist (e.g. renamed/deleted).
+  dashSelectedProducts = new Set(Array.from(dashSelectedProducts).filter((p) => products.includes(p)));
+
+  const panel = el('dashFilterProductPanel');
+  panel.innerHTML = `
+    <label class="multiselect-option">
+      <input type="checkbox" id="dashFilterProductAll" ${dashSelectedProducts.size === 0 ? 'checked' : ''} />
+      Semua produk
+    </label>
+    <div class="multiselect-divider"></div>
+    ${products.map((p) => `
+      <label class="multiselect-option">
+        <input type="checkbox" class="dash-product-option" value="${escapeHtml(p)}" ${dashSelectedProducts.has(p) ? 'checked' : ''} />
+        ${escapeHtml(p)}
+      </label>`).join('')}
+  `;
+  updateDashProductToggleLabel();
+}
+
 function renderDashboardCards(cards) {
   el('statOmset').textContent = formatRupiah(cards.totalOmset);
   el('statTotalPesanan').textContent = cards.totalPesanan;
@@ -223,17 +258,16 @@ async function renderDashboard() {
     const from = el('dashFilterFrom').value;
     const to = el('dashFilterTo').value;
     const owner = el('dashFilterOwner').value;
-    const product = el('dashFilterProduct').value;
     const creator = el('dashFilterCreator').value;
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     if (owner && owner !== 'all') params.set('ownerNumber', owner);
-    if (product && product !== 'all') params.set('productName', product);
+    dashSelectedProducts.forEach((p) => params.append('productName', p));
     if (creator && creator !== 'all') params.set('createdByEmail', creator);
 
     const stats = await apiGet(`/api/dashboard/stats?${params.toString()}`);
     populateDashboardFilterSelect(el('dashFilterOwner'), stats.filterOptions.owners, 'Semua akun');
-    populateDashboardFilterSelect(el('dashFilterProduct'), stats.filterOptions.products, 'Semua produk');
+    populateDashboardProductPanel(stats.filterOptions.products);
     populateDashboardFilterSelect(el('dashFilterCreator'), stats.filterOptions.creators, 'Semua CS');
     renderDashboardCards(stats.cards);
     renderDashboardCharts(stats);
@@ -1326,8 +1360,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderPreOrdersTable();
   });
 
-  ['dashFilterFrom', 'dashFilterTo', 'dashFilterOwner', 'dashFilterProduct', 'dashFilterCreator'].forEach((id) => {
+  ['dashFilterFrom', 'dashFilterTo', 'dashFilterOwner', 'dashFilterCreator'].forEach((id) => {
     el(id).addEventListener('input', renderDashboard);
+  });
+
+  el('dashFilterProductToggle').addEventListener('click', (e) => {
+    e.stopPropagation();
+    el('dashFilterProductPanel').classList.toggle('hidden');
+  });
+  el('dashFilterProductPanel').addEventListener('change', (e) => {
+    if (e.target.id === 'dashFilterProductAll') {
+      if (e.target.checked) {
+        dashSelectedProducts.clear();
+        el('dashFilterProductPanel').querySelectorAll('.dash-product-option').forEach((cb) => { cb.checked = false; });
+      } else {
+        e.target.checked = true; // deselecting "Semua produk" alone means nothing - keep it checked
+      }
+    } else if (e.target.classList.contains('dash-product-option')) {
+      if (e.target.checked) dashSelectedProducts.add(e.target.value);
+      else dashSelectedProducts.delete(e.target.value);
+      el('dashFilterProductAll').checked = dashSelectedProducts.size === 0;
+    }
+    updateDashProductToggleLabel();
+    renderDashboard();
+  });
+  document.addEventListener('click', (e) => {
+    if (!el('dashFilterProductMulti').contains(e.target)) {
+      el('dashFilterProductPanel').classList.add('hidden');
+    }
   });
 
   el('filterMode').addEventListener('change', () => {
