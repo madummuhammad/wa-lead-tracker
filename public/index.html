@@ -59,35 +59,55 @@
         </header>
 
         <section class="filters compact">
+          <label>Dari
+            <input type="date" id="dashFilterFrom" />
+          </label>
+          <label>Sampai
+            <input type="date" id="dashFilterTo" />
+          </label>
           <label>Akun WA
             <select id="dashFilterOwner">
               <option value="all">Semua akun</option>
             </select>
           </label>
-          <label>Filter Tanggal
-            <select id="dashFilterMode">
-              <option value="all">Semua waktu</option>
-              <option value="single">Tanggal tunggal</option>
-              <option value="range">Rentang tanggal</option>
-              <option value="no-date">Belum ada tanggal lead</option>
+          <label>Produk
+            <select id="dashFilterProduct">
+              <option value="all">Semua produk</option>
             </select>
           </label>
-          <span class="filter-single" id="dashFilterSingleWrap">
-            <label>Tanggal
-              <input type="date" id="dashFilterSingle" />
-            </label>
-          </span>
-          <span class="filter-range" id="dashFilterRangeWrap">
-            <label>Dari
-              <input type="date" id="dashFilterFrom" />
-            </label>
-            <label>Sampai
-              <input type="date" id="dashFilterTo" />
-            </label>
-          </span>
+          <label>CS
+            <select id="dashFilterCreator">
+              <option value="all">Semua CS</option>
+            </select>
+          </label>
         </section>
 
         <section class="stats">
+          <div class="stat-card stat-omset">
+            <div class="stat-icon">Rp</div>
+            <div class="stat-value" id="statOmset">Rp 0</div>
+            <div class="stat-label">Total Omset</div>
+          </div>
+          <div class="stat-card stat-total">
+            <div class="stat-icon">◱</div>
+            <div class="stat-value" id="statTotalPesanan">0</div>
+            <div class="stat-label">Total Pesanan</div>
+          </div>
+          <div class="stat-card stat-aov">
+            <div class="stat-icon">~</div>
+            <div class="stat-value" id="statAov">Rp 0</div>
+            <div class="stat-label">Rata-rata Nilai Pesanan</div>
+          </div>
+          <div class="stat-card stat-cancel">
+            <div class="stat-icon">✕</div>
+            <div class="stat-value" id="statCancelRate">0%</div>
+            <div class="stat-label">Tingkat Pembatalan</div>
+          </div>
+          <div class="stat-card stat-preorder">
+            <div class="stat-icon">▥</div>
+            <div class="stat-value" id="statActivePreOrders">0</div>
+            <div class="stat-label">Pra-Pesanan Aktif</div>
+          </div>
           <div class="stat-card stat-total">
             <div class="stat-icon">◱</div>
             <div class="stat-value" id="statTotal">0</div>
@@ -102,6 +122,44 @@
             <div class="stat-icon">%</div>
             <div class="stat-value" id="statRate">0%</div>
             <div class="stat-label">Closing Rate</div>
+          </div>
+        </section>
+
+        <section class="chart-grid">
+          <div class="chart-card">
+            <h3>Omset per Hari</h3>
+            <p class="hint">Dari pesanan yang tidak dibatalkan.</p>
+            <div id="chartRevenueByDay"></div>
+          </div>
+          <div class="chart-card">
+            <h3>Chat Masuk per Hari</h3>
+            <p class="hint">Volume lead harian.</p>
+            <div id="chartChatsByDay"></div>
+          </div>
+          <div class="chart-card">
+            <h3>Omset per Produk</h3>
+            <p class="hint">Produk mana yang benar-benar laku.</p>
+            <div id="chartOrdersByProduct"></div>
+          </div>
+          <div class="chart-card">
+            <h3>Pra-Pesanan per CS</h3>
+            <p class="hint">Termasuk yang sudah jadi Pesanan.</p>
+            <div id="chartPreOrdersByCreator"></div>
+          </div>
+          <div class="chart-card">
+            <h3>Closing Rate per Akun WA</h3>
+            <p class="hint">Nomor WA mana yang paling efektif convert.</p>
+            <div id="chartClosingRateByOwner"></div>
+          </div>
+          <div class="chart-card">
+            <h3>Lead vs Pesanan per Produk</h3>
+            <p class="hint" id="chartLeadsVsOrdersHint">Produk mana yang banyak ditanya tapi jarang closing.</p>
+            <div id="chartLeadsVsOrders"></div>
+          </div>
+          <div class="chart-card" style="grid-column: 1 / -1;">
+            <h3>Funnel: Lead → Pra-Pesanan → Pesanan → Diterima</h3>
+            <p class="hint">Bersifat indikatif - populasinya tidak selalu persis sama antar tahap.</p>
+            <div id="chartFunnel"></div>
           </div>
         </section>
 
@@ -540,6 +598,7 @@
     </main>
   </div>
 
+  <script src="charts.js"></script>
   <script src="dashboard.js"></script>
 </body>
 </html>

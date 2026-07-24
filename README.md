@@ -33,10 +33,12 @@ Without the header (or with a wrong key) this should return `401`.
 - `DELETE /api/orders/:id` - delete one order
 - `POST /api/orders/delete` - bulk delete, body is `{ ids: [...] }`
 - `POST /api/orders/import` - multipart upload, field name `file`, an .xlsx order export (see below)
-- `GET /api/preorders`, `POST /api/preorders`, `PUT /api/preorders/:id`, `DELETE /api/preorders/:id` - pre-order CRUD
+- `GET /api/preorders` - active (non-converted) pre-orders by default; pass `?includeConverted=true` to also get ones that already graduated into an Order (needed for historical/funnel reporting)
+- `POST /api/preorders`, `PUT /api/preorders/:id`, `DELETE /api/preorders/:id` - pre-order CRUD
 - `POST /api/preorders/delete` - bulk delete, body is `{ ids: [...] }`
 - `POST /api/preorders/import` - multipart upload, field name `file`, bulk-adds from the manual "Data Order" tracker sheet (see below)
 - `GET /api/users/mini` - `{ users: [{id, email}, ...] }`, any authenticated user (unlike `GET /api/users` below) - just enough to populate the "Dibuat Oleh" picker on Pra-Pesanan
+- `GET /api/dashboard/stats` - server-side aggregated numbers for the Dashboard page (cards, charts, funnel) so the browser never has to fetch and crunch the whole `Chat`/`Order`/`PreOrder` collections just to show a few totals. Optional query params, all combinable: `from`, `to` (`YYYY-MM-DD`, inclusive), `ownerNumber`, `productName`, `createdByEmail`. Response shape: `{ cards, revenueByDay, chatsByDay, ordersByProduct, preOrdersByCreator, closingRateByOwner, leadsVsOrdersByProduct, productTaggingCoverage, funnel, filterOptions }` - `filterOptions` is always computed from the *unfiltered* data so the dropdowns never shrink based on the current selection.
 
 All routes under `/api` require `Authorization: Bearer <API_KEY>`.
 
@@ -128,9 +130,14 @@ sheet at all), most to least confident:
    among pre-orders dated on/before the order, picking the closest one -
    unless there's a tie, which is left alone rather than guessed (a wrong
    match is worse than none, since a pre-order is just a plan).
-4. A matched `PreOrder` is **deleted**, not updated - the Order already has
-   the authoritative data. Orders with no match, and pre-orders with no
-   match, are both left completely alone; nothing ever guesses.
+4. A matched `PreOrder` is marked **converted** (`convertedOrderId` set to the
+   matching `Order._id`, `convertedAt` stamped) rather than deleted - the
+   Order already has the authoritative data, but keeping the row lets the
+   Dashboard funnel and CS-productivity charts count it historically. `GET
+   /api/preorders` filters converted rows out by default, so the Pra-Pesanan
+   page's active list looks exactly like it did when matches were hard-deleted.
+   Orders with no match, and pre-orders with no match, are both left
+   completely alone; nothing ever guesses.
 `"No HP/WA"` is normalized from whatever format the sheet stores it in (often
 a plain number, which silently drops a leading 0) to the same 62-prefixed
 format `Order.customerPhone` uses, or matching would just never succeed.

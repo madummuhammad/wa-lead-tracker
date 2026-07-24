@@ -50,17 +50,19 @@ async function getNextPreOrderNumber() {
 // Orders with no match, and pre-orders with no match, are both left
 // completely alone - that's the point, not a fallback.
 async function consumeMatchingPreOrders(orders) {
-  const allPreOrders = await PreOrder.find({}).lean();
-  const consumedIds = new Set();
+  // Only ever match against pre-orders not already converted - a converted
+  // one keeps the order it originally matched, never gets reassigned.
+  const allPreOrders = await PreOrder.find({ convertedOrderId: { $exists: false } }).lean();
+  const consumed = new Map(); // preOrderId -> orderId it graduated into
 
   orders.forEach((order) => {
-    const available = allPreOrders.filter((p) => !consumedIds.has(String(p._id)));
+    const available = allPreOrders.filter((p) => !consumed.has(String(p._id)));
 
     const refCodeMatch = order.refCode
       ? available.find((p) => p.orderNumber && p.orderNumber === order.refCode)
       : null;
     if (refCodeMatch) {
-      consumedIds.add(String(refCodeMatch._id));
+      consumed.set(String(refCodeMatch._id), order._id || order.id);
       return;
     }
 
@@ -68,7 +70,7 @@ async function consumeMatchingPreOrders(orders) {
       ? available.find((p) => p.noResi && p.noResi === order.trackingNumber)
       : null;
     if (resiMatch) {
-      consumedIds.add(String(resiMatch._id));
+      consumed.set(String(resiMatch._id), order._id || order.id);
       return;
     }
 
@@ -88,11 +90,20 @@ async function consumeMatchingPreOrders(orders) {
     );
     if (tiedClosest.length !== 1) return; // ambiguous - leave alone
 
-    consumedIds.add(String(tiedClosest[0]._id));
+    consumed.set(String(tiedClosest[0]._id), order._id || order.id);
   });
 
-  if (consumedIds.size > 0) await PreOrder.deleteMany({ _id: { $in: Array.from(consumedIds) } });
-  return consumedIds.size;
+  if (consumed.size > 0) {
+    const convertedAt = new Date();
+    const ops = Array.from(consumed.entries()).map(([preOrderId, orderId]) => ({
+      updateOne: {
+        filter: { _id: preOrderId },
+        update: { $set: { convertedOrderId: orderId, convertedAt } },
+      },
+    }));
+    await PreOrder.bulkWrite(ops);
+  }
+  return consumed.size;
 }
 
 function createApp() {
@@ -528,7 +539,7 @@ function createApp() {
         const trackingNumber = getCell(row, 'Resi');
         const refCode = getCell(row, 'Kode Referensi');
 
-        importedOrders.push({ customerPhone, productName, createdDate, trackingNumber, refCode });
+        importedOrders.push({ id: noOrder, customerPhone, productName, createdDate, trackingNumber, refCode });
 
         await Order.findByIdAndUpdate(
           noOrder,
@@ -672,7 +683,11 @@ function createApp() {
 
   app.get('/api/preorders', requireAuth, async (req, res) => {
     try {
-      const docs = await PreOrder.find({}).sort({ orderDate: -1 }).lean();
+      // Converted ones are excluded by default - same "disappears once it
+      // becomes a real order" list the UI has always shown. They still exist
+      // for GET /api/dashboard/stats' historical conversion counting.
+      const filter = req.query.includeConverted === 'true' ? {} : { convertedOrderId: { $exists: false } };
+      const docs = await PreOrder.find(filter).sort({ orderDate: -1 }).lean();
       const preOrders = docs.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }));
       res.json({ preOrders });
     } catch (e) {
@@ -909,6 +924,227 @@ function createApp() {
         { upsert: true, new: true }
       ).lean();
       res.json({ ok: true, settings: doc });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // ---- Dashboard (aggregated stats for the management-facing Dashboard page) ----
+  //
+  // One endpoint, computed server-side in a single pass over Chat/Order/
+  // PreOrder, rather than shipping all three collections to the browser just
+  // to sum/group them there (the rest of this app does client-side
+  // aggregation over already-small tables; Dashboard's numbers span the
+  // whole business, so they're computed here instead).
+  //
+  // Query params (all optional): `from`/`to` (YYYY-MM-DD, inclusive),
+  // `ownerNumber`, `productName`, `createdByEmail` - 'all' or omitted means
+  // no filter on that dimension. ownerNumber only affects Chat/Order metrics
+  // (PreOrder has no owner concept, it's tied to a CS creator instead);
+  // createdByEmail only affects PreOrder metrics for the same reason.
+
+  app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
+    try {
+      const { from, to } = req.query;
+      const ownerNumber = req.query.ownerNumber && req.query.ownerNumber !== 'all' ? req.query.ownerNumber : null;
+      const productName = req.query.productName && req.query.productName !== 'all' ? req.query.productName : null;
+      const createdByEmail = req.query.createdByEmail && req.query.createdByEmail !== 'all' ? req.query.createdByEmail : null;
+
+      const fromTime = from ? new Date(`${from}T00:00:00`).getTime() : null;
+      const toTime = to ? new Date(`${to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000 - 1 : null;
+      const withinDateFilter = (dateValue) => {
+        if (fromTime === null && toTime === null) return true;
+        if (!dateValue) return false;
+        const t = new Date(dateValue).getTime();
+        if (fromTime !== null && t < fromTime) return false;
+        if (toTime !== null && t > toTime) return false;
+        return true;
+      };
+
+      const [chats, orders, preOrders, settingsDoc] = await Promise.all([
+        Chat.find({}).lean(),
+        Order.find({}).lean(),
+        PreOrder.find({}).lean(), // includes converted ones - needed for the funnel/CS history
+        Settings.findById('singleton').lean(),
+      ]);
+      const settings = settingsDoc || { closingLabels: [], manualClosing: {} };
+
+      // Mirrors the client's isClosing() in dashboard.js exactly - same rule,
+      // computed here since Dashboard aggregates across the whole business.
+      const isClosingChat = (chat) => {
+        const byLabel = (chat.labels || []).some((l) => (settings.closingLabels || []).includes(l));
+        const manual = chat.manualClosing === true || (settings.manualClosing && settings.manualClosing[chat._id] === true);
+        return byLabel || manual;
+      };
+
+      const filteredChats = chats.filter((c) =>
+        (!ownerNumber || (c.ownerNumber || '') === ownerNumber) &&
+        (!productName || (c.product || '') === productName) &&
+        withinDateFilter(c.firstMessageDate)
+      );
+      const filteredOrders = orders.filter((o) =>
+        (!ownerNumber || (o.ownerNumber || '') === ownerNumber) &&
+        (!productName || (o.productName || '') === productName) &&
+        withinDateFilter(o.createdDate)
+      );
+      const filteredPreOrders = preOrders.filter((p) =>
+        (!productName || (p.productName || '') === productName) &&
+        (!createdByEmail || (p.createdByEmail || '') === createdByEmail) &&
+        withinDateFilter(p.orderDate)
+      );
+
+      // ---- Cards ----
+      const chatMasuk = filteredChats.length;
+      const closingCount = filteredChats.filter(isClosingChat).length;
+      const closingRate = chatMasuk > 0 ? Math.round((closingCount / chatMasuk) * 1000) / 10 : 0;
+
+      const nonCancelledOrders = filteredOrders.filter((o) => o.status !== 'Dibatalkan');
+      const cancelledCount = filteredOrders.filter((o) => o.status === 'Dibatalkan').length;
+      const deliveredCount = filteredOrders.filter((o) => o.status === 'Diterima').length;
+      const totalOmset = nonCancelledOrders.reduce((sum, o) => sum + (o.price || 0), 0);
+      const totalPesanan = filteredOrders.length;
+      const avgOrderValue = nonCancelledOrders.length > 0 ? Math.round(totalOmset / nonCancelledOrders.length) : 0;
+      const cancellationRate = totalPesanan > 0 ? Math.round((cancelledCount / totalPesanan) * 1000) / 10 : 0;
+
+      const activePreOrders = filteredPreOrders.filter((p) => !p.convertedOrderId).length;
+
+      // ---- Revenue by day (line chart) ----
+      const revenueByDayMap = new Map();
+      nonCancelledOrders.forEach((o) => {
+        if (!o.createdDate) return;
+        const day = new Date(o.createdDate).toISOString().slice(0, 10);
+        revenueByDayMap.set(day, (revenueByDayMap.get(day) || 0) + (o.price || 0));
+      });
+      const revenueByDay = Array.from(revenueByDayMap.entries())
+        .map(([date, omset]) => ({ date, omset }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      // ---- Chats by day (lead volume trend line chart) ----
+      const chatsByDayMap = new Map();
+      filteredChats.forEach((c) => {
+        if (!c.firstMessageDate) return;
+        const day = new Date(c.firstMessageDate).toISOString().slice(0, 10);
+        chatsByDayMap.set(day, (chatsByDayMap.get(day) || 0) + 1);
+      });
+      const chatsByDay = Array.from(chatsByDayMap.entries())
+        .map(([date, count]) => ({ date, count }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      // ---- Orders by product (bar chart) ----
+      const productMap = new Map();
+      nonCancelledOrders.forEach((o) => {
+        const name = o.productName || '(Tanpa Nama)';
+        const entry = productMap.get(name) || { productName: name, omset: 0, qty: 0 };
+        entry.omset += o.price || 0;
+        entry.qty += o.qty || 1;
+        productMap.set(name, entry);
+      });
+      const ordersByProduct = Array.from(productMap.values()).sort((a, b) => b.omset - a.omset);
+
+      // ---- Pre-orders by CS (bar chart) - all of them, active+converted,
+      // since this is about CS productivity, not just what's still pending ----
+      const creatorMap = new Map();
+      filteredPreOrders.forEach((p) => {
+        const email = p.createdByEmail || '(Tidak diketahui)';
+        creatorMap.set(email, (creatorMap.get(email) || 0) + 1);
+      });
+      const preOrdersByCreator = Array.from(creatorMap.entries())
+        .map(([email, count]) => ({ email, count }))
+        .sort((a, b) => b.count - a.count);
+
+      // ---- Closing rate by Akun WA (bar chart) ----
+      const ownerMap = new Map();
+      filteredChats.forEach((c) => {
+        const owner = c.ownerNumber || '(Tanpa Akun)';
+        const entry = ownerMap.get(owner) || { ownerNumber: owner, total: 0, closing: 0 };
+        entry.total += 1;
+        if (isClosingChat(c)) entry.closing += 1;
+        ownerMap.set(owner, entry);
+      });
+      const closingRateByOwner = Array.from(ownerMap.values())
+        .map((e) => ({
+          ownerNumber: e.ownerNumber,
+          total: e.total,
+          closing: e.closing,
+          rate: e.total > 0 ? Math.round((e.closing / e.total) * 1000) / 10 : 0,
+        }))
+        .sort((a, b) => b.total - a.total);
+
+      // ---- Leads vs Orders by product (which products get asked about a
+      // lot but don't convert, vs the reverse) ----
+      const leadsByProductMap = new Map();
+      filteredChats.forEach((c) => {
+        if (!c.product) return;
+        leadsByProductMap.set(c.product, (leadsByProductMap.get(c.product) || 0) + 1);
+      });
+      const orderCountByProductMap = new Map();
+      filteredOrders.forEach((o) => {
+        if (!o.productName) return;
+        orderCountByProductMap.set(o.productName, (orderCountByProductMap.get(o.productName) || 0) + 1);
+      });
+      const allProductNames = new Set([...leadsByProductMap.keys(), ...orderCountByProductMap.keys()]);
+      const leadsVsOrdersByProduct = Array.from(allProductNames)
+        .map((name) => {
+          const leads = leadsByProductMap.get(name) || 0;
+          const ordersCount = orderCountByProductMap.get(name) || 0;
+          // Chat.product is a manual per-lead tag (new, low coverage so far),
+          // while Order.productName is populated for every order - so orders
+          // can outnumber "leads" for a product whose buyers mostly weren't
+          // tagged in WA Web yet. A rate above 100% isn't a real conversion
+          // rate, it's a coverage artifact - suppress it rather than show a
+          // number that would mislead a reader taking it at face value.
+          const conversionRate = leads > 0 && ordersCount <= leads
+            ? Math.round((ordersCount / leads) * 1000) / 10
+            : null;
+          return { productName: name, leads, orders: ordersCount, conversionRate };
+        })
+        .sort((a, b) => b.leads - a.leads);
+
+      // How much of the lead volume even has a product tag - context for
+      // reading leadsVsOrdersByProduct, since it only covers tagged chats.
+      const taggedChatCount = filteredChats.filter((c) => c.product).length;
+      const productTaggingCoverage = chatMasuk > 0 ? Math.round((taggedChatCount / chatMasuk) * 1000) / 10 : 0;
+
+      // ---- Funnel ----
+      // Indicative, not a strict same-cohort funnel - a lead, a pre-order,
+      // and an order aren't guaranteed to be the exact same population (an
+      // order/pre-order can create a brand new contact that was never a WA
+      // lead at all), so stage-to-stage "conversion" here is directional.
+      const funnel = {
+        leads: chatMasuk,
+        preOrders: filteredPreOrders.length,
+        orders: totalPesanan,
+        delivered: deliveredCount,
+      };
+
+      // ---- Filter dropdown options - from the *unfiltered* full data, so
+      // the dropdowns always show every possibility regardless of the
+      // current selection ----
+      const filterOptions = {
+        owners: Array.from(new Set(chats.map((c) => c.ownerNumber).filter(Boolean))).sort(),
+        products: Array.from(new Set([
+          ...chats.map((c) => c.product),
+          ...orders.map((o) => o.productName),
+          ...preOrders.map((p) => p.productName),
+        ].filter(Boolean))).sort(),
+        creators: Array.from(new Set(preOrders.map((p) => p.createdByEmail).filter(Boolean))).sort(),
+      };
+
+      res.json({
+        cards: {
+          totalOmset, totalPesanan, avgOrderValue, cancellationRate,
+          activePreOrders, chatMasuk, closingCount, closingRate,
+        },
+        revenueByDay,
+        chatsByDay,
+        ordersByProduct,
+        preOrdersByCreator,
+        closingRateByOwner,
+        leadsVsOrdersByProduct,
+        productTaggingCoverage,
+        funnel,
+        filterOptions,
+      });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

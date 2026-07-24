@@ -6,12 +6,18 @@ const mongoose = require('mongoose');
 // from the sheet is just one way to add rows, not the only way.
 //
 // When a lincah Order import (POST /api/orders/import) finds an Order that
-// matches one of these (by resi, or by phone+product+closest date), this
-// pre-order is deleted - it has "graduated" into a real Order, which already
-// holds the authoritative data, so nothing needs to be copied over. Pre-
-// orders that never find a match are simply left alone indefinitely.
+// matches one of these (by reference code, resi, or phone+product+closest
+// date), it's marked converted (convertedOrderId/convertedAt) rather than
+// deleted - it has "graduated" into a real Order, which already holds the
+// authoritative data, so there's nothing left to edit here, but the record
+// stays for historical conversion reporting (see GET /api/dashboard/stats).
+// GET /api/preorders excludes converted ones by default, so the *active*
+// list still looks exactly like a hard delete happened. Pre-orders that
+// never find a match are simply left alone indefinitely.
 const preOrderSchema = new mongoose.Schema(
   {
+    convertedOrderId: String, // Order._id this graduated into, once matched
+    convertedAt: Date,
     // Short, human-typeable code (e.g. "PP-000123") generated once at
     // creation and never changed - meant to be copied into lincah.id's
     // "Kode Referensi" field when the order is actually placed there, so

@@ -21,10 +21,10 @@ let allUsersMini = [];
 
 const el = (id) => document.getElementById(id);
 
-// Two independent filter bars share the same date/owner logic: the Dashboard
-// page's filter only slices the stat cards, the Kontak page's filter (plus
-// search) drives the table - they're intentionally not linked to each other.
-const DASH_IDS = { owner: 'dashFilterOwner', mode: 'dashFilterMode', single: 'dashFilterSingle', from: 'dashFilterFrom', to: 'dashFilterTo' };
+// Dashboard's filters (date range, Akun WA, Produk, CS) are independent of
+// Kontak's own filter+search bar - Dashboard's numbers come from the server
+// (GET /api/dashboard/stats, aggregated across Chat/Order/PreOrder), Kontak's
+// table is still sliced client-side from the already-loaded chat list.
 const KONTAK_IDS = { owner: 'filterOwner', mode: 'filterMode', single: 'filterSingle', from: 'filterFrom', to: 'filterTo' };
 
 function authHeaders(extra = {}) {
@@ -155,25 +155,93 @@ function populateOwnerSelect(select) {
   select.value = owners.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
 }
 
-// ---- Dashboard page: stat cards only ----
+// ---- Dashboard page: cards + charts, aggregated server-side ----
 
-function renderDashboard() {
-  populateOwnerSelect(el(DASH_IDS.owner));
-  const filter = readFilterState(DASH_IDS);
+function populateDashboardFilterSelect(select, options, placeholderLabel) {
+  const previousValue = select.value || 'all';
+  select.innerHTML = `<option value="all">${placeholderLabel}</option>` +
+    options.map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
+  select.value = options.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
+}
 
-  const matched = Object.values(allChats).filter((chat) => {
-    if (filter.owner !== 'all' && (chat.ownerNumber || '') !== filter.owner) return false;
-    if (!matchesDateFilter(chat, filter)) return false;
-    return true;
+function renderDashboardCards(cards) {
+  el('statOmset').textContent = formatRupiah(cards.totalOmset);
+  el('statTotalPesanan').textContent = cards.totalPesanan;
+  el('statAov').textContent = formatRupiah(cards.avgOrderValue);
+  el('statCancelRate').textContent = `${cards.cancellationRate}%`;
+  el('statActivePreOrders').textContent = cards.activePreOrders;
+  el('statTotal').textContent = cards.chatMasuk;
+  el('statClosing').textContent = cards.closingCount;
+  el('statRate').textContent = `${cards.closingRate}%`;
+}
+
+function renderDashboardCharts(stats) {
+  renderLineChart(el('chartRevenueByDay'), stats.revenueByDay, {
+    xKey: 'date', yKey: 'omset', formatValue: chartFormatRupiahCompact,
+    emptyMessage: 'Belum ada pesanan pada rentang ini.',
   });
+  renderLineChart(el('chartChatsByDay'), stats.chatsByDay, {
+    xKey: 'date', yKey: 'count', color: '#2a78d6', formatValue: chartFormatCompactNumber,
+    emptyMessage: 'Belum ada chat masuk pada rentang ini.',
+  });
+  renderBarChart(el('chartOrdersByProduct'), stats.ordersByProduct.slice(0, 8), {
+    xKey: 'productName', yKey: 'omset', formatValue: chartFormatRupiahCompact,
+    emptyMessage: 'Belum ada pesanan.',
+  });
+  renderBarChart(el('chartPreOrdersByCreator'), stats.preOrdersByCreator, {
+    xKey: 'email', yKey: 'count', color: '#4a3aa7', formatValue: chartFormatCompactNumber,
+    emptyMessage: 'Belum ada pra-pesanan.',
+  });
+  renderBarChart(el('chartClosingRateByOwner'), stats.closingRateByOwner, {
+    xKey: 'ownerNumber', yKey: 'rate', color: '#1baf7a', formatValue: (v) => `${Math.round(v * 10) / 10}%`,
+    emptyMessage: 'Belum ada chat masuk.',
+  });
+  el('chartLeadsVsOrdersHint').textContent = stats.productTaggingCoverage > 0
+    ? `Hanya ${stats.productTaggingCoverage}% chat yang sudah ditandai produknya di WA Web - rasio di bawah ini baru mewakili sebagian kecil lead.`
+    : 'Belum ada chat yang ditandai produknya di WA Web.';
+  renderGroupedBarChart(el('chartLeadsVsOrders'), stats.leadsVsOrdersByProduct.slice(0, 8), {
+    xKey: 'productName',
+    series: [
+      { key: 'leads', label: 'Lead', color: CHART_CATEGORICAL[0] },
+      { key: 'orders', label: 'Pesanan', color: CHART_CATEGORICAL[1] },
+    ],
+    formatValue: chartFormatCompactNumber,
+    emptyMessage: 'Belum ada chat yang ditandai produknya.',
+  });
+  renderFunnelChart(el('chartFunnel'), [
+    { label: 'Lead', value: stats.funnel.leads },
+    { label: 'Pra-Pesanan', value: stats.funnel.preOrders },
+    { label: 'Pesanan', value: stats.funnel.orders },
+    { label: 'Diterima', value: stats.funnel.delivered },
+  ]);
+}
 
-  const totalLead = matched.length;
-  const closingCount = matched.filter(isClosing).length;
-  const rate = totalLead > 0 ? Math.round((closingCount / totalLead) * 1000) / 10 : 0;
+async function renderDashboard() {
+  el('dashLoadingState').classList.remove('hidden');
+  try {
+    const params = new URLSearchParams();
+    const from = el('dashFilterFrom').value;
+    const to = el('dashFilterTo').value;
+    const owner = el('dashFilterOwner').value;
+    const product = el('dashFilterProduct').value;
+    const creator = el('dashFilterCreator').value;
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (owner && owner !== 'all') params.set('ownerNumber', owner);
+    if (product && product !== 'all') params.set('productName', product);
+    if (creator && creator !== 'all') params.set('createdByEmail', creator);
 
-  el('statTotal').textContent = totalLead;
-  el('statClosing').textContent = closingCount;
-  el('statRate').textContent = `${rate}%`;
+    const stats = await apiGet(`/api/dashboard/stats?${params.toString()}`);
+    populateDashboardFilterSelect(el('dashFilterOwner'), stats.filterOptions.owners, 'Semua akun');
+    populateDashboardFilterSelect(el('dashFilterProduct'), stats.filterOptions.products, 'Semua produk');
+    populateDashboardFilterSelect(el('dashFilterCreator'), stats.filterOptions.creators, 'Semua CS');
+    renderDashboardCards(stats.cards);
+    renderDashboardCharts(stats);
+  } catch (e) {
+    handleApiError(e, 'Gagal memuat statistik dashboard.');
+  } finally {
+    el('dashLoadingState').classList.add('hidden');
+  }
 }
 
 // ---- Kontak page: full table ----
@@ -1094,6 +1162,7 @@ function switchPage(page) {
   el('pesananPage').classList.toggle('hidden', page !== 'pesanan');
   el('praPesananPage').classList.toggle('hidden', page !== 'praPesanan');
   el('usersPage').classList.toggle('hidden', page !== 'users');
+  if (page === 'dashboard') renderDashboard();
   if (page === 'produk') loadProducts();
   if (page === 'pesanan') loadOrders();
   if (page === 'praPesanan') loadPreOrders();
@@ -1257,11 +1326,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderPreOrdersTable();
   });
 
-  el('dashFilterMode').addEventListener('change', () => {
-    syncFilterVisibility(DASH_IDS, { single: 'dashFilterSingleWrap', range: 'dashFilterRangeWrap' });
-    renderDashboard();
-  });
-  ['dashFilterOwner', 'dashFilterSingle', 'dashFilterFrom', 'dashFilterTo'].forEach((id) => {
+  ['dashFilterFrom', 'dashFilterTo', 'dashFilterOwner', 'dashFilterProduct', 'dashFilterCreator'].forEach((id) => {
     el(id).addEventListener('input', renderDashboard);
   });
 
@@ -1297,7 +1362,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   el('deleteSelectedBtn').addEventListener('click', deleteSelected);
 
-  syncFilterVisibility(DASH_IDS, { single: 'dashFilterSingleWrap', range: 'dashFilterRangeWrap' });
   syncFilterVisibility(KONTAK_IDS, { single: 'filterSingleWrap', range: 'filterRangeWrap' });
 
   const storedToken = localStorage.getItem(TOKEN_STORAGE);
