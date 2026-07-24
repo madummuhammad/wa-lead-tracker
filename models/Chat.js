@@ -19,6 +19,13 @@ const chatSchema = new mongoose.Schema(
     // routine scan merges), so pullFromBackend can tell whose closing mark is
     // actually newer instead of whichever device happened to sync/scan last.
     manualClosingUpdatedAt: String,
+    // Which product this lead is tied to (picked in WhatsApp Web when the
+    // chat comes in) - same per-chat-not-settings reasoning as manualClosing
+    // above, and same paired "*UpdatedAt" timestamp so the extension's pull
+    // merge can tell whose product pick is newer across devices instead of
+    // one device's local copy always winning.
+    product: String,
+    productUpdatedAt: String,
     firstMessageDate: String,
     firstSeenAt: String,
     labels: { type: [String], default: [] },
