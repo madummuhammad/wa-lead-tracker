@@ -17,6 +17,7 @@ const PREORDERS_PAGE_SIZE = 10;
 let preOrdersPage = 1;
 let selectedOrderIds = new Set();
 let selectedPreOrderIds = new Set();
+let allUsersMini = [];
 
 const el = (id) => document.getElementById(id);
 
@@ -709,10 +710,32 @@ function applyPreOrderProductPrice() {
   }
 }
 
+async function loadUsersMini() {
+  try {
+    const { users } = await apiGet('/api/users/mini');
+    allUsersMini = users;
+  } catch (e) {
+    // Non-fatal - the "Dibuat Oleh" picker just falls back to showing
+    // nothing selectable beyond the current user if this fails.
+  }
+}
+
+// Who created a pre-order is a business attribution field the owner can
+// reassign (e.g. entering on behalf of a CS rep), not a locked audit trail -
+// defaults to whoever's logged in, but any listed user can be picked instead.
+function populatePreOrderCreatorSelect(currentUserId) {
+  const select = el('preOrderCreatedBy');
+  const value = currentUserId || (currentUser && currentUser.userId) || '';
+  select.innerHTML = allUsersMini
+    .map((u) => `<option value="${escapeHtml(u.id)}" ${u.id === value ? 'selected' : ''}>${escapeHtml(u.email)}</option>`)
+    .join('');
+}
+
 async function openPreOrderAddModal() {
   resetPreOrderForm();
-  await loadProducts();
+  await Promise.all([loadProducts(), loadUsersMini()]);
   populatePreOrderProductSelect('');
+  populatePreOrderCreatorSelect();
   el('preOrderFormModal').classList.remove('hidden');
 }
 
@@ -767,6 +790,7 @@ function readPreOrderForm() {
   body.orderDate = el('preOrderOrderDate').value || undefined;
   body.lincah = el('preOrderLincah').checked;
   body.aneka = el('preOrderAneka').checked;
+  body.createdByUserId = el('preOrderCreatedBy').value || undefined;
   return body;
 }
 
@@ -786,18 +810,21 @@ function resetPreOrderForm() {
   el('preOrderFormTitle').textContent = 'Tambah Pra-Pesanan Baru';
   el('preOrderSaveBtn').textContent = 'Tambah';
   el('preOrderFormMsg').textContent = '';
+  el('preOrderNumberDisplay').textContent = '';
 }
 
 async function startEditPreOrder(id) {
   const preOrder = allPreOrders.find((p) => p.id === id);
   if (!preOrder) return;
-  await loadProducts();
+  await Promise.all([loadProducts(), loadUsersMini()]);
   populatePreOrderProductSelect(preOrder.productName);
+  populatePreOrderCreatorSelect(preOrder.createdByUserId);
   fillPreOrderForm(preOrder);
   editingPreOrderId = id;
   el('preOrderFormTitle').textContent = 'Edit Pra-Pesanan';
   el('preOrderSaveBtn').textContent = 'Simpan Perubahan';
   el('preOrderFormMsg').textContent = '';
+  el('preOrderNumberDisplay').textContent = preOrder.orderNumber ? `No. Order: ${preOrder.orderNumber}` : '';
   el('preOrderFormModal').classList.remove('hidden');
 }
 
@@ -839,8 +866,24 @@ async function deletePreOrder(id) {
   }
 }
 
+function populatePreOrderCreatorFilterSelect(select) {
+  const creators = Array.from(new Set(allPreOrders.map((p) => p.createdByEmail).filter(Boolean))).sort();
+  const previousValue = select.value || 'all';
+  select.innerHTML = '<option value="all">Semua CS</option>' +
+    creators.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  select.value = creators.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
+}
+
 function renderPreOrdersTable() {
-  const sorted = allPreOrders.slice().sort((a, b) => {
+  populatePreOrderCreatorFilterSelect(el('preOrderFilterCreator'));
+  const creatorFilter = el('preOrderFilterCreator').value;
+
+  const filtered = allPreOrders.filter((p) => {
+    if (creatorFilter !== 'all' && (p.createdByEmail || '') !== creatorFilter) return false;
+    return true;
+  });
+
+  const sorted = filtered.slice().sort((a, b) => {
     const ta = a.orderDate ? new Date(a.orderDate).getTime() : 0;
     const tb = b.orderDate ? new Date(b.orderDate).getTime() : 0;
     return tb - ta;
@@ -874,6 +917,7 @@ function renderPreOrdersTable() {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><input type="checkbox" class="preorder-row-checkbox" data-id="${escapeHtml(preOrder.id)}" ${selectedPreOrderIds.has(preOrder.id) ? 'checked' : ''} /></td>
+      <td>${escapeHtml(preOrder.orderNumber || '-')}</td>
       <td>${escapeHtml(dateDisplay)}</td>
       <td>${escapeHtml(preOrder.customerName || '-')}</td>
       <td>${escapeHtml(preOrder.customerPhone || '-')}</td>
@@ -881,6 +925,7 @@ function renderPreOrdersTable() {
       <td>${escapeHtml(preOrder.qty ?? '-')}</td>
       <td>${escapeHtml(preOrder.noResi || '-')}</td>
       <td>${escapeHtml(preOrder.statusOrder || '-')}</td>
+      <td>${escapeHtml(preOrder.createdByEmail || '-')}</td>
       <td>
         <button class="edit-product-btn edit-preorder-btn" data-id="${escapeHtml(preOrder.id)}">Edit</button>
         <button class="delete-product-btn delete-preorder-btn" data-id="${escapeHtml(preOrder.id)}">Hapus</button>
@@ -1167,6 +1212,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
   el('preOrdersRefreshBtn').addEventListener('click', loadPreOrders);
+  el('preOrderFilterCreator').addEventListener('input', () => {
+    preOrdersPage = 1;
+    renderPreOrdersTable();
+  });
 
   el('ordersPrevBtn').addEventListener('click', () => {
     ordersPage -= 1;

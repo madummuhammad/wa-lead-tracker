@@ -296,6 +296,14 @@
           </div>
         </header>
 
+        <section class="filters">
+          <label>Filter CS
+            <select id="preOrderFilterCreator">
+              <option value="all">Semua CS</option>
+            </select>
+          </label>
+        </section>
+
         <section class="bulk-actions">
           <span id="preOrdersSelectedCount"></span>
           <button id="preOrdersDeleteSelectedBtn" class="danger" disabled>Hapus yang Dipilih</button>
@@ -306,6 +314,7 @@
             <thead>
               <tr>
                 <th><input type="checkbox" id="preOrdersSelectAllCheckbox" title="Pilih semua" /></th>
+                <th>No. Order</th>
                 <th>Tanggal Order</th>
                 <th>Nama Customer</th>
                 <th>No HP</th>
@@ -313,6 +322,7 @@
                 <th>Qty</th>
                 <th>No Resi</th>
                 <th>Status Order</th>
+                <th>Dibuat Oleh</th>
                 <th></th>
               </tr>
             </thead>
@@ -335,6 +345,7 @@
               <h2 id="preOrderFormTitle">Tambah Pra-Pesanan Baru</h2>
               <button class="modal-close-btn" id="preOrderFormCloseBtn">&times;</button>
             </div>
+            <p id="preOrderNumberDisplay" class="hint"></p>
             <div class="form-section">
               <h3 class="form-section-title">Data Pelanggan</h3>
               <div class="form-grid">
@@ -353,6 +364,10 @@
                 <label class="form-field form-field-wide">
                   <span>Alamat Lengkap</span>
                   <input type="text" id="preOrderAddress" />
+                </label>
+                <label class="form-field">
+                  <span>Dibuat Oleh (CS)</span>
+                  <select id="preOrderCreatedBy"></select>
                 </label>
               </div>
             </div>

@@ -13,6 +13,7 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const PreOrder = require('../models/PreOrder');
+const Counter = require('../models/Counter');
 
 const TOKEN_EXPIRY = '30d'; // personal tool, favor not re-logging-in over short-lived tokens
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -21,13 +22,28 @@ function normalizeMatchName(name) {
   return String(name || '').trim().toLowerCase();
 }
 
+// One document per counter name, incremented atomically - see Counter.js.
+async function getNextSequence(name) {
+  const doc = await Counter.findByIdAndUpdate(name, { $inc: { seq: 1 } }, { upsert: true, new: true });
+  return doc.seq;
+}
+
+async function getNextPreOrderNumber() {
+  const seq = await getNextSequence('preOrderNumber');
+  return `PP-${String(seq).padStart(6, '0')}`;
+}
+
 // For each freshly imported/upserted Order, look for an existing PreOrder
 // that represents the same sale and delete it - it has "graduated" into
 // this real Order, which already holds the authoritative data, so nothing
-// needs to be copied over. Matching:
-//   1. Resi match (PreOrder.noResi === Order.trackingNumber) - exact and
-//      unambiguous.
-//   2. Otherwise phone + product name (case/whitespace-insensitive), among
+// needs to be copied over. Matching, most to least confident:
+//   1. Reference code match (PreOrder.orderNumber === Order.refCode) - the
+//      pre-order's own generated number, meant to be copied into lincah's
+//      "Kode Referensi" field by hand when the order is actually placed
+//      there. Exact and unambiguous whenever the user does that.
+//   2. Resi match (PreOrder.noResi === Order.trackingNumber) - exact and
+//      unambiguous too, just discovered later (once shipping exists).
+//   3. Otherwise phone + product name (case/whitespace-insensitive), among
 //      pre-orders dated on/before this order, picking the closest one -
 //      unless there's a tie, which is left alone rather than guessed (a
 //      wrong match is worse than none, since a pre-order is just a plan).
@@ -39,6 +55,14 @@ async function consumeMatchingPreOrders(orders) {
 
   orders.forEach((order) => {
     const available = allPreOrders.filter((p) => !consumedIds.has(String(p._id)));
+
+    const refCodeMatch = order.refCode
+      ? available.find((p) => p.orderNumber && p.orderNumber === order.refCode)
+      : null;
+    if (refCodeMatch) {
+      consumedIds.add(String(refCodeMatch._id));
+      return;
+    }
 
     const resiMatch = order.trackingNumber
       ? available.find((p) => p.noResi && p.noResi === order.trackingNumber)
@@ -116,6 +140,19 @@ function createApp() {
   app.get('/api/auth/me', requireAuth, (req, res) => {
     if (req.auth.type !== 'user') return res.status(400).json({ error: 'not a user session' });
     res.json({ email: req.auth.email, role: req.auth.role, userId: req.auth.userId });
+  });
+
+  // Lightweight user list any authenticated team member can read (just
+  // id + email, no role/timestamps) - used to populate the "Dibuat oleh"
+  // picker on Pra-Pesanan, so a CS account (non-admin) can still see who's
+  // available to attribute an entry to without needing admin rights.
+  app.get('/api/users/mini', requireAuth, async (req, res) => {
+    try {
+      const users = await User.find({}).select('email').lean();
+      res.json({ users: users.map((u) => ({ id: u._id, email: u.email })) });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
   });
 
   // ---- User management (admin only) ----
@@ -489,8 +526,9 @@ function createApp() {
         const volumeRaw = getCell(row, 'Volume');
         const zipcodeRaw = getCell(row, 'Zipcode');
         const trackingNumber = getCell(row, 'Resi');
+        const refCode = getCell(row, 'Kode Referensi');
 
-        importedOrders.push({ customerPhone, productName, createdDate, trackingNumber });
+        importedOrders.push({ customerPhone, productName, createdDate, trackingNumber, refCode });
 
         await Order.findByIdAndUpdate(
           noOrder,
@@ -521,7 +559,7 @@ function createApp() {
               createdDate,
               receivedDate: parseIndonesianDate(getCell(row, 'Tanggal Diterima')),
               note: getCell(row, 'Catatan'),
-              refCode: getCell(row, 'Kode Referensi'),
+              refCode,
               reconciliationStatus: getCell(row, 'Status Rekonsiliasi'),
               warehouseAdminName: getCell(row, 'Nama Admin Gudang'),
               ownerNumber,
@@ -594,6 +632,22 @@ function createApp() {
     return productId;
   }
 
+  // The creator is a business attribution field, not a security/audit one -
+  // the user explicitly wants to be able to pick which CS entered an order
+  // (e.g. owner backfilling on someone's behalf), not just auto-stamp
+  // whoever is logged in. body.createdByUserId (from the form's dropdown)
+  // wins when it names a real user; otherwise fall back to the session.
+  async function resolvePreOrderCreator(req, body) {
+    if (body.createdByUserId) {
+      const user = await User.findById(body.createdByUserId).select('email').lean();
+      if (user) return { createdByUserId: String(user._id), createdByEmail: user.email };
+    }
+    if (req.auth.type === 'user') {
+      return { createdByUserId: req.auth.userId, createdByEmail: req.auth.email };
+    }
+    return { createdByUserId: undefined, createdByEmail: undefined };
+  }
+
   function preOrderFieldsFromBody(body) {
     return {
       customerName: body.customerName,
@@ -636,9 +690,13 @@ function createApp() {
       const productId = await resolvePreOrderRefs({
         productName, customerPhone, customerName: body.customerName, orderDate,
       });
+      const creator = await resolvePreOrderCreator(req, body);
+      const orderNumber = await getNextPreOrderNumber();
 
       const preOrder = await PreOrder.create({
         ...preOrderFieldsFromBody(body),
+        ...creator,
+        orderNumber,
         orderDate,
         customerPhone,
         productName,
@@ -660,10 +718,13 @@ function createApp() {
       const productId = await resolvePreOrderRefs({
         productName, customerPhone, customerName: body.customerName, orderDate,
       });
+      // Only reassign the creator if the form actually sent one - orderNumber
+      // is never touched here, it's set once at creation and stays put.
+      const creator = body.createdByUserId ? await resolvePreOrderCreator(req, body) : {};
 
       const preOrder = await PreOrder.findByIdAndUpdate(
         req.params.id,
-        { $set: { ...preOrderFieldsFromBody(body), orderDate, customerPhone, productName, productId } },
+        { $set: { ...preOrderFieldsFromBody(body), ...creator, orderDate, customerPhone, productName, productId } },
         { new: true }
       );
       if (!preOrder) return res.status(404).json({ error: 'pre-order not found' });
@@ -744,6 +805,9 @@ function createApp() {
       // an overlapping file doesn't pile up duplicates.
       const existing = await PreOrder.find({}).lean();
       const existingKeys = new Set(existing.map((p) => preOrderDedupKey(p.customerPhone, p.productName, p.orderDate)));
+      // Whoever runs a bulk import is the attributed creator for every row it
+      // adds - there's no per-row "who entered this" in the sheet itself.
+      const importerCreator = await resolvePreOrderCreator(req, {});
 
       const productCache = new Map();
       const chatCache = new Map();
@@ -793,6 +857,8 @@ function createApp() {
         const ctt = getCell(row, 'CTT');
 
         await PreOrder.create({
+          ...importerCreator,
+          orderNumber: await getNextPreOrderNumber(),
           orderDate,
           customerName,
           customerPhone,
