@@ -1323,6 +1323,26 @@ function populatePreOrderCreatorFilterSelect(select) {
   select.value = creators.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
 }
 
+// Kabari Proses/Resi status for one Pra-Pesanan row, mirroring the same two
+// per-chat flags the extension's floating panel toggles: Chat.preOrderNotified
+// tied to *this* row's own orderNumber, Chat.resiNotified tied to the Order
+// it converted into (if any) - so a chat's marks from an unrelated, earlier
+// Pra-Pesanan/Order never leak onto a different row for the same phone.
+// Unlike the extension's chat-list "Belum Di Input" state, there's no
+// equivalent here - a Pra-Pesanan row is by definition already entered into
+// the system, so this only ever has 3 states.
+function preOrderNotifyStatus(preOrder) {
+  const chat = preOrder.customerPhone ? allChats[preOrder.customerPhone] : null;
+  if (chat && chat.resiNotified === true && preOrder.convertedOrderId
+    && chat.resiNotifiedOrderId === preOrder.convertedOrderId) {
+    return { state: 'dikirim', text: 'Dikirim' };
+  }
+  if (chat && chat.preOrderNotified === true && chat.preOrderNotifiedOrderNumber === preOrder.orderNumber) {
+    return { state: 'proses', text: 'Di Proses' };
+  }
+  return { state: 'belum', text: 'Belum Dikabari' };
+}
+
 function renderPreOrdersTable() {
   populatePreOrderCreatorFilterSelect(el('preOrderFilterCreator'));
   const preOrderProductNames = Array.from(new Set(allPreOrders.map((p) => p.productName).filter(Boolean))).sort();
@@ -1371,6 +1391,7 @@ function renderPreOrdersTable() {
     const dateDisplay = preOrder.orderDate
       ? new Date(preOrder.orderDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
       : '-';
+    const notifyStatus = preOrderNotifyStatus(preOrder);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><input type="checkbox" class="preorder-row-checkbox" data-id="${escapeHtml(preOrder.id)}" ${selectedPreOrderIds.has(preOrder.id) ? 'checked' : ''} /></td>
@@ -1383,6 +1404,7 @@ function renderPreOrdersTable() {
       <td>${escapeHtml(preOrder.qty ?? '-')}</td>
       <td>${escapeHtml(preOrder.noResi || '-')}</td>
       <td>${escapeHtml(preOrder.statusOrder || '-')}</td>
+      <td><span class="notify-pill notify-pill--${notifyStatus.state}">${escapeHtml(notifyStatus.text)}</span></td>
       <td>${escapeHtml(preOrder.createdByEmail || '-')}</td>
       <td>
         <button class="edit-product-btn edit-preorder-btn" data-id="${escapeHtml(preOrder.id)}">Edit</button>

@@ -529,6 +529,32 @@ tbody tr:hover { background: #fafcfb; }
   color: var(--brand-dark);
 }
 
+/* Kabari Proses/Resi status on the Pra-Pesanan table - same 3 states and
+   color progression (red -> amber -> green) as the extension's chat-list
+   badge, just without its 4th "Belum Di Input" state (a Pra-Pesanan row is
+   by definition already entered into the system - see preOrderNotifyStatus
+   in dashboard.js). */
+.notify-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.notify-pill--belum {
+  background: #fdeaea;
+  color: #b3261e;
+}
+.notify-pill--proses {
+  background: #fff2cc;
+  color: #8a5a00;
+}
+.notify-pill--dikirim {
+  background: #1e8e4f;
+  color: #ffffff;
+}
+
 .closing-toggle {
   font-size: 11px;
   cursor: pointer;
