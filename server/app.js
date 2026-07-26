@@ -451,9 +451,21 @@ function createApp() {
     return isNaN(date.getTime()) ? undefined : date;
   }
 
+  // ?notifyResi=true narrows this down to orders the extension's per-chat
+  // "Kabari Resi" badge cares about: already has a tracking number, and not
+  // yet in a final state ("Diterima" = delivered, nothing left to tell the
+  // customer; "Dibatalkan" = cancelled, no resi is relevant). Same shape as
+  // the unfiltered response - the extension only reads a few fields off each
+  // one - so this stays a plain filter on the existing route instead of a
+  // separate endpoint.
   app.get('/api/orders', requireAuth, async (req, res) => {
     try {
-      const docs = await Order.find({}).sort({ createdDate: -1 }).lean();
+      const filter = {};
+      if (req.query.notifyResi === 'true') {
+        filter.status = { $nin: ['Dibatalkan', 'Diterima'] };
+        filter.trackingNumber = { $nin: [null, ''] };
+      }
+      const docs = await Order.find(filter).sort({ createdDate: -1 }).lean();
       const orders = docs.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }));
       res.json({ orders });
     } catch (e) {

@@ -36,6 +36,15 @@ const chatSchema = new mongoose.Schema(
     preOrderNotified: Boolean,
     preOrderNotifiedOrderNumber: String,
     preOrderNotifiedUpdatedAt: String,
+    // Whether this contact has been told (by hand, in WhatsApp) that their
+    // in-flight Order's tracking number (resi) is available - same
+    // per-chat-not-settings/paired-timestamp reasoning as manualClosing
+    // above. resiNotifiedOrderId records *which* Order (by its own _id, the
+    // "No. Order") the flag refers to, so a later, different order for the
+    // same contact doesn't inherit a stale "resi already told" mark.
+    resiNotified: Boolean,
+    resiNotifiedOrderId: String,
+    resiNotifiedUpdatedAt: String,
     firstMessageDate: String,
     firstSeenAt: String,
     labels: { type: [String], default: [] },
