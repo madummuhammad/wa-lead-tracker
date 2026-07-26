@@ -477,6 +477,20 @@ body {
   margin-top: 14px;
 }
 .pagination-info { font-size: 13px; color: var(--ink-soft); }
+.page-size-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.page-size-picker select {
+  padding: 5px 8px;
+  border: 1px solid #d1d7db;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
 
 /* ---------- Tables ---------- */
 .table-wrap {

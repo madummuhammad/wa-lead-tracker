@@ -10,10 +10,10 @@ let editingProductId = null;
 const KONTAK_PAGE_SIZE = 10;
 let kontakPage = 1;
 let allOrders = [];
-const ORDERS_PAGE_SIZE = 10;
+let ordersPageSize = 10;
 let ordersPage = 1;
 let allPreOrders = [];
-const PREORDERS_PAGE_SIZE = 10;
+let preOrdersPageSize = 10;
 let preOrdersPage = 1;
 let selectedOrderIds = new Set();
 let selectedPreOrderIds = new Set();
@@ -637,11 +637,11 @@ function renderOrdersTable() {
     if (!currentIds.has(id)) selectedOrderIds.delete(id);
   });
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / ORDERS_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(sorted.length / ordersPageSize));
   if (ordersPage > totalPages) ordersPage = totalPages;
   if (ordersPage < 1) ordersPage = 1;
-  const pageStart = (ordersPage - 1) * ORDERS_PAGE_SIZE;
-  const pageItems = sorted.slice(pageStart, pageStart + ORDERS_PAGE_SIZE);
+  const pageStart = (ordersPage - 1) * ordersPageSize;
+  const pageItems = sorted.slice(pageStart, pageStart + ordersPageSize);
 
   el('ordersPageInfo').textContent = sorted.length > 0
     ? `Halaman ${ordersPage} dari ${totalPages} (${sorted.length} pesanan)`
@@ -1236,11 +1236,11 @@ function renderPreOrdersTable() {
     if (!currentIds.has(id)) selectedPreOrderIds.delete(id);
   });
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / PREORDERS_PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(sorted.length / preOrdersPageSize));
   if (preOrdersPage > totalPages) preOrdersPage = totalPages;
   if (preOrdersPage < 1) preOrdersPage = 1;
-  const pageStart = (preOrdersPage - 1) * PREORDERS_PAGE_SIZE;
-  const pageItems = sorted.slice(pageStart, pageStart + PREORDERS_PAGE_SIZE);
+  const pageStart = (preOrdersPage - 1) * preOrdersPageSize;
+  const pageItems = sorted.slice(pageStart, pageStart + preOrdersPageSize);
 
   el('preOrdersPageInfo').textContent = sorted.length > 0
     ? `Halaman ${preOrdersPage} dari ${totalPages} (${sorted.length} pra-pesanan)`
@@ -1592,6 +1592,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     ordersPage += 1;
     renderOrdersTable();
   });
+  el('ordersPageSize').addEventListener('change', () => {
+    ordersPageSize = Number(el('ordersPageSize').value) || 10;
+    ordersPage = 1;
+    renderOrdersTable();
+  });
 
   el('ordersSelectAllCheckbox').addEventListener('change', () => {
     const checked = el('ordersSelectAllCheckbox').checked;
@@ -1625,6 +1630,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   el('preOrdersNextBtn').addEventListener('click', () => {
     preOrdersPage += 1;
+    renderPreOrdersTable();
+  });
+  el('preOrdersPageSize').addEventListener('change', () => {
+    preOrdersPageSize = Number(el('preOrdersPageSize').value) || 10;
+    preOrdersPage = 1;
     renderPreOrdersTable();
   });
 
