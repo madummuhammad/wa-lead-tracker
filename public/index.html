@@ -286,10 +286,12 @@
         <section class="block">
           <h2>Impor Pesanan dari Excel</h2>
           <p class="hint">
-            File .xlsx hasil ekspor pesanan. Produk baru yang belum ada di
-            katalog otomatis ditambahkan (hanya namanya - harga diisi manual
-            nanti di halaman Produk). Kontak baru yang belum ada juga otomatis
-            ditambahkan dan ditandai Closing, kecuali pesanannya Dibatalkan.
+            File .xlsx hasil ekspor pesanan. Produk tiap baris diambil dari
+            Pra-Pesanan yang cocok, atau dari katalog Produk yang sudah ada -
+            kalau nama produknya tidak dikenali, akan muncul pop up untuk
+            memilih produk yang sesuai (produk baru tidak dibuat otomatis).
+            Kontak baru yang belum ada otomatis ditambahkan dan ditandai
+            Closing, kecuali pesanannya Dibatalkan.
           </p>
           <div class="user-form">
             <input type="file" id="orderImportFile" accept=".xlsx" />
@@ -341,6 +343,147 @@
           <span id="ordersPageInfo" class="pagination-info"></span>
           <button id="ordersNextBtn" class="btn-outline">Berikutnya ›</button>
         </section>
+
+        <!-- Modal: Edit Pesanan -->
+        <div id="orderFormModal" class="modal-overlay hidden">
+          <div class="modal-box">
+            <div class="modal-header">
+              <h2>Edit Pesanan</h2>
+              <button class="modal-close-btn" id="orderFormCloseBtn">&times;</button>
+            </div>
+            <p id="orderNumberDisplay" class="hint"></p>
+
+            <div class="form-section">
+              <h3 class="form-section-title">Pelanggan &amp; Pengiriman</h3>
+              <div class="form-grid">
+                <label class="form-field">
+                  <span>Penerima</span>
+                  <input type="text" id="orderCustomerName" />
+                </label>
+                <label class="form-field">
+                  <span>No. HP</span>
+                  <input type="text" id="orderCustomerPhone" />
+                </label>
+                <label class="form-field form-field-wide">
+                  <span>Alamat</span>
+                  <input type="text" id="orderAddress" />
+                </label>
+                <label class="form-field">
+                  <span>Kota</span>
+                  <input type="text" id="orderCity" />
+                </label>
+                <label class="form-field">
+                  <span>Kode Pos</span>
+                  <input type="text" id="orderZipcode" />
+                </label>
+                <label class="form-field">
+                  <span>Pengiriman</span>
+                  <input type="text" id="orderShippingType" />
+                </label>
+                <label class="form-field">
+                  <span>Kurir</span>
+                  <input type="text" id="orderCourier" />
+                </label>
+                <label class="form-field">
+                  <span>Akun WA</span>
+                  <input type="text" id="orderOwnerNumber" />
+                </label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3 class="form-section-title">Produk &amp; Harga</h3>
+              <div class="form-grid">
+                <label class="form-field">
+                  <span>Produk</span>
+                  <select id="orderProductName"></select>
+                </label>
+                <label class="form-field">
+                  <span>Jumlah</span>
+                  <input type="number" id="orderQty" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Berat (gram)</span>
+                  <input type="number" id="orderWeight" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Volume</span>
+                  <input type="text" id="orderVolume" />
+                </label>
+                <label class="form-field">
+                  <span>Harga Produk</span>
+                  <input type="number" id="orderPrice" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Ongkos Kirim</span>
+                  <input type="number" id="orderShippingCost" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Diskon COD</span>
+                  <input type="number" id="orderCodDiscount" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Biaya COD</span>
+                  <input type="number" id="orderCodFee" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Nilai COD</span>
+                  <input type="number" id="orderCodValue" min="0" />
+                </label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3 class="form-section-title">Status &amp; Pengiriman</h3>
+              <div class="form-grid">
+                <label class="form-field">
+                  <span>Tanggal Dibuat</span>
+                  <input type="date" id="orderCreatedDate" />
+                </label>
+                <label class="form-field">
+                  <span>Tanggal Diterima</span>
+                  <input type="date" id="orderReceivedDate" />
+                </label>
+                <label class="form-field">
+                  <span>Status</span>
+                  <input type="text" id="orderStatus" />
+                </label>
+                <label class="form-field">
+                  <span>No Resi</span>
+                  <input type="text" id="orderTrackingNumber" />
+                </label>
+                <label class="form-field">
+                  <span>Kode Referensi</span>
+                  <input type="text" id="orderRefCode" />
+                </label>
+                <label class="form-field">
+                  <span>Status Rekonsiliasi</span>
+                  <input type="text" id="orderReconciliationStatus" />
+                </label>
+                <label class="form-field">
+                  <span>Nama Admin Gudang</span>
+                  <input type="text" id="orderWarehouseAdminName" />
+                </label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3 class="form-section-title">Lainnya</h3>
+              <div class="form-grid">
+                <label class="form-field form-field-wide">
+                  <span>Catatan</span>
+                  <input type="text" id="orderNote" />
+                </label>
+              </div>
+            </div>
+
+            <p id="orderFormMsg" class="error-msg"></p>
+            <div class="modal-actions">
+              <button id="orderSaveBtn" class="btn-primary">Simpan Perubahan</button>
+              <button id="orderCancelEditBtn" class="btn-outline">Batal</button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- ================= PRA-PESANAN PAGE ================= -->
@@ -520,7 +663,9 @@
             <p class="hint">
               File .xlsx dari sheet "Data Order". Hanya menambahkan baris baru -
               baris dengan nomor HP + produk + tanggal yang sama dengan yang
-              sudah ada dilewati, tidak menimpa/menumpuk.
+              sudah ada dilewati, tidak menimpa/menumpuk. Nama produk yang
+              belum ada di katalog akan diminta dipilihkan produk yang sesuai
+              lewat pop up (tidak dibuat otomatis).
             </p>
             <div class="user-form">
               <input type="file" id="preOrderImportFile" accept=".xlsx" />
@@ -589,6 +734,29 @@
           </table>
         </section>
       </section>
+
+      <!-- Modal: Pilih Produk (shown mid-import when a row's product doesn't
+           match the linked Pra-Pesanan or an exact catalog name) -->
+      <div id="productMappingModal" class="modal-overlay hidden">
+        <div class="modal-box">
+          <div class="modal-header">
+            <h2>Pilih Produk</h2>
+            <button class="modal-close-btn" id="productMappingCloseBtn">&times;</button>
+          </div>
+          <p class="hint">
+            Nama produk berikut ada di file tapi tidak cocok dengan Pra-Pesanan
+            manapun dan belum ada di katalog Produk. Pilih produk yang sesuai
+            dari katalog untuk tiap nama - baris yang tidak dipilih akan
+            dilewati (tidak diimpor).
+          </p>
+          <div id="productMappingList" class="form-grid"></div>
+          <p id="productMappingMsg" class="error-msg"></p>
+          <div class="modal-actions">
+            <button id="productMappingConfirmBtn" class="btn-primary">Lanjutkan Impor</button>
+            <button id="productMappingCancelBtn" class="btn-outline">Batal</button>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 

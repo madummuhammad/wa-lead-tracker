@@ -21,7 +21,7 @@ const preOrderSchema = new mongoose.Schema(
     // Short, human-typeable code (e.g. "PP202607269F3K") generated once
     // at creation and never changed - meant to be copied into lincah.id's
     // "Kode Referensi" field when the order is actually placed there, so
-    // the resulting Order.refCode gives consumeMatchingPreOrders() an exact,
+    // the resulting Order.refCode gives findPreOrderMatch() an exact,
     // unambiguous match instead of relying only on resi or phone+product+date.
     // The date prefix is just for readability/sorting - the trailing 4 chars
     // are what actually make it unguessable (see getNextPreOrderNumber() in

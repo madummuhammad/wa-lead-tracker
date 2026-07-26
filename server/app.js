@@ -55,10 +55,10 @@ async function getNextPreOrderNumber() {
   throw new Error('gagal membuat No. Order unik setelah beberapa percobaan');
 }
 
-// The matching cascade shared by consumeMatchingPreOrders() (default, import-
-// everything-then-match flow) and the onlyMatched import mode (which needs
-// to know the match *before* deciding whether to create the Order at all).
-// Most to least confident:
+// The matching cascade used by POST /api/orders/import - needed *before*
+// deciding whether/how to create the Order at all, since a match also
+// determines which Product the row resolves to (see that route). Most to
+// least confident:
 //   1. Reference code match (PreOrder.orderNumber === Order.refCode) - the
 //      pre-order's own generated number, meant to be copied into lincah's
 //      "Kode Referensi" field by hand when the order is actually placed
@@ -96,37 +96,6 @@ function findPreOrderMatch({ refCode, trackingNumber, customerPhone, productName
   if (tiedClosest.length !== 1) return null; // ambiguous - leave alone
 
   return tiedClosest[0];
-}
-
-// For each freshly imported/upserted Order, look for an existing PreOrder
-// that represents the same sale and mark it converted - it has "graduated"
-// into this real Order, which already holds the authoritative data,
-// so nothing needs to be copied over. Orders with no match, and pre-orders
-// with no match, are both left completely alone - that's the point, not a
-// fallback.
-async function consumeMatchingPreOrders(orders) {
-  // Only ever match against pre-orders not already converted - a converted
-  // one keeps the order it originally matched, never gets reassigned.
-  const allPreOrders = await PreOrder.find({ convertedOrderId: { $exists: false } }).lean();
-  const consumed = new Map(); // preOrderId -> orderId it graduated into
-
-  orders.forEach((order) => {
-    const available = allPreOrders.filter((p) => !consumed.has(String(p._id)));
-    const match = findPreOrderMatch(order, available);
-    if (match) consumed.set(String(match._id), order._id || order.id);
-  });
-
-  if (consumed.size > 0) {
-    const convertedAt = new Date();
-    const ops = Array.from(consumed.entries()).map(([preOrderId, orderId]) => ({
-      updateOne: {
-        filter: { _id: preOrderId },
-        update: { $set: { convertedOrderId: orderId, convertedAt } },
-      },
-    }));
-    await PreOrder.bulkWrite(ops);
-  }
-  return consumed.size;
 }
 
 function createApp() {
@@ -439,6 +408,59 @@ function createApp() {
     }
   });
 
+  app.put('/api/orders/:id', requireAuth, async (req, res) => {
+    try {
+      const body = req.body || {};
+      const productName = body.productName ? String(body.productName).trim() : undefined;
+      let productId;
+      if (productName) {
+        let product = await Product.findOne({ name: productName });
+        if (!product) product = await Product.create({ name: productName });
+        productId = product._id;
+      }
+
+      const order = await Order.findByIdAndUpdate(
+        req.params.id,
+        {
+          $set: {
+            shippingType: body.shippingType,
+            courier: body.courier,
+            customerName: body.customerName,
+            customerPhone: body.customerPhone ? onlyDigits(body.customerPhone) : undefined,
+            address: body.address,
+            city: body.city,
+            productName,
+            productId,
+            weight: numOrUndefined(body.weight),
+            qty: numOrUndefined(body.qty),
+            volume: body.volume,
+            shippingCost: numOrUndefined(body.shippingCost),
+            codDiscount: numOrUndefined(body.codDiscount),
+            codFee: numOrUndefined(body.codFee),
+            price: numOrUndefined(body.price),
+            codValue: numOrUndefined(body.codValue),
+            status: body.status,
+            trackingNumber: body.trackingNumber,
+            createdDate: body.createdDate ? new Date(body.createdDate) : undefined,
+            receivedDate: body.receivedDate ? new Date(body.receivedDate) : undefined,
+            note: body.note,
+            refCode: body.refCode,
+            reconciliationStatus: body.reconciliationStatus,
+            warehouseAdminName: body.warehouseAdminName,
+            ownerNumber: body.ownerNumber,
+            zipcode: body.zipcode,
+          },
+        },
+        { new: true }
+      );
+      if (!order) return res.status(404).json({ error: 'order not found' });
+      const { _id, __v, ...rest } = order.toObject();
+      res.json({ ok: true, order: { id: _id, ...rest } });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   app.delete('/api/orders/:id', requireAuth, async (req, res) => {
     try {
       await Order.findByIdAndDelete(req.params.id);
@@ -464,7 +486,23 @@ function createApp() {
   // ?onlyMatched=true restricts this import to rows that match an existing
   // Pra-Pesanan (see findPreOrderMatch above) - anything unmatched is
   // skipped entirely rather than added as a new Order. Omitted/false imports
-  // every row unconditionally, matching being an afterward side effect.
+  // every row unconditionally, matching being an afterward side effect either
+  // way (matching always runs; the flag only controls whether a miss skips
+  // the row or not).
+  //
+  // Every row's product is resolved, never created: the matched Pra-Pesanan's
+  // own catalog product wins first, then an exact-name match already in the
+  // Product catalog, then whatever the admin explicitly chose via
+  // `productMapping`. A row whose product can't be resolved by any of those
+  // is skipped, not imported with a guessed/blank product.
+  //
+  // ?dryRun=true runs the exact same resolution pass without writing
+  // anything to the database, and returns `unresolvedProducts` - the distinct
+  // raw product names (from the file) nothing above could resolve. The
+  // frontend shows a popup letting the admin map each to an existing catalog
+  // product, then re-submits the same file with `productMapping` (a JSON
+  // string sent as a normal multipart field: `{ "<raw name>": { "productId":
+  // "...", "productName": "..." } }`) on the real, non-dry-run call.
   app.post('/api/orders/import', requireAuth, upload.single('file'), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'file is required (field name "file")' });
@@ -494,27 +532,28 @@ function createApp() {
         return v;
       };
 
-      const productCache = new Map(); // name -> product doc
-      const chatCache = new Map(); // phone -> chat doc
-
-      // ?onlyMatched=true - used by the Pra-Pesanan page's "Impor dari
-      // Lincah" button: only rows that match an existing (not yet converted)
-      // Pra-Pesanan get turned into an Order at all; everything else is
-      // skipped outright (no Order, no new Product/Chat side effects). The
-      // Pesanan page's own import omits this flag and keeps importing every
-      // row like before, matching being a side effect rather than a gate.
+      const dryRun = req.query.dryRun === 'true';
       const onlyMatched = req.query.onlyMatched === 'true';
-      let availablePreOrders = onlyMatched
-        ? await PreOrder.find({ convertedOrderId: { $exists: false } }).lean()
-        : null;
+      let productMapping = {};
+      if (req.body.productMapping) {
+        try {
+          productMapping = JSON.parse(req.body.productMapping);
+        } catch (e) {
+          // Malformed mapping just leaves those rows unresolved below.
+        }
+      }
+
+      let availablePreOrders = await PreOrder.find({ convertedOrderId: { $exists: false } }).lean();
+      const productCache = new Map(); // raw name -> {productId, productName} | null (unresolved)
+      const chatCache = new Map(); // phone -> chat doc
+      const unresolvedProducts = new Set();
       const preOrderConversionOps = [];
 
       let ordersImported = 0;
-      let productsCreated = 0;
       let contactsCreated = 0;
       let rowsSkipped = 0;
       let rowsUnmatchedSkipped = 0;
-      const importedOrders = []; // fed to consumeMatchingPreOrders() below (default mode only)
+      let rowsProductUnresolvedSkipped = 0;
 
       for (let r = 2; r <= worksheet.rowCount; r++) {
         const row = worksheet.getRow(r);
@@ -535,33 +574,43 @@ function createApp() {
           continue;
         }
 
-        let matchedPreOrder = null;
-        if (onlyMatched) {
-          matchedPreOrder = findPreOrderMatch(
-            { refCode, trackingNumber, customerPhone, productName, createdDate },
-            availablePreOrders
-          );
-          if (!matchedPreOrder) {
-            rowsUnmatchedSkipped++;
-            continue;
-          }
+        const matchedPreOrder = findPreOrderMatch(
+          { refCode, trackingNumber, customerPhone, productName, createdDate },
+          availablePreOrders
+        );
+        if (onlyMatched && !matchedPreOrder) {
+          rowsUnmatchedSkipped++;
+          continue;
+        }
+        if (matchedPreOrder) {
           // Don't let a later row in the same file match this pre-order again.
           availablePreOrders = availablePreOrders.filter((p) => String(p._id) !== String(matchedPreOrder._id));
         }
 
-        // Match the master Product catalog by exact name (assumed unique).
-        // A brand-new product only gets its name filled in - price and
-        // dimensions are left for the admin to fill in later on the Produk
-        // page, since this order's price is just a snapshot for this order.
-        let product = productCache.get(productName);
-        if (product === undefined && productName) {
-          product = await Product.findOne({ name: productName });
-          if (!product) {
-            product = await Product.create({ name: productName });
-            productsCreated++;
+        // Resolve this row's product - see the route comment above for the
+        // priority order. Never creates a Product.
+        let resolvedProduct = null;
+        if (matchedPreOrder && matchedPreOrder.productId) {
+          resolvedProduct = { productId: matchedPreOrder.productId, productName: matchedPreOrder.productName };
+        } else if (productName) {
+          if (productCache.has(productName)) {
+            resolvedProduct = productCache.get(productName);
+          } else {
+            const exact = await Product.findOne({ name: productName }).lean();
+            resolvedProduct = exact
+              ? { productId: exact._id, productName: exact.name }
+              : (productMapping[productName] || null);
+            productCache.set(productName, resolvedProduct);
           }
-          productCache.set(productName, product);
         }
+
+        if (!resolvedProduct) {
+          if (productName) unresolvedProducts.add(productName);
+          if (!dryRun) rowsProductUnresolvedSkipped++;
+          continue;
+        }
+
+        if (dryRun) continue; // preview only - no writes below this point
 
         // Match the contact by phone number, creating it if this is a buyer
         // we haven't seen before (e.g. never scanned from WA Web).
@@ -593,8 +642,6 @@ function createApp() {
         const volumeRaw = getCell(row, 'Volume');
         const zipcodeRaw = getCell(row, 'Zipcode');
 
-        importedOrders.push({ id: noOrder, customerPhone, productName, createdDate, trackingNumber, refCode });
-
         await Order.findByIdAndUpdate(
           noOrder,
           {
@@ -606,8 +653,8 @@ function createApp() {
               customerPhone,
               address: getCell(row, 'Alamat'),
               city: getCell(row, 'Kota penerima'),
-              productName,
-              productId: product ? product._id : undefined,
+              productName: resolvedProduct.productName,
+              productId: resolvedProduct.productId,
               weight: numOrUndefined(getCell(row, 'Berat')),
               qty: numOrUndefined(getCell(row, 'Jumlah')),
               volume: volumeRaw !== undefined ? String(volumeRaw) : undefined,
@@ -635,7 +682,7 @@ function createApp() {
         );
         ordersImported++;
 
-        if (onlyMatched && matchedPreOrder) {
+        if (matchedPreOrder) {
           preOrderConversionOps.push({
             updateOne: {
               filter: { _id: matchedPreOrder._id },
@@ -645,15 +692,22 @@ function createApp() {
         }
       }
 
-      let preOrdersMoved;
-      if (onlyMatched) {
-        if (preOrderConversionOps.length > 0) await PreOrder.bulkWrite(preOrderConversionOps);
-        preOrdersMoved = preOrderConversionOps.length;
-      } else {
-        preOrdersMoved = await consumeMatchingPreOrders(importedOrders);
+      if (dryRun) {
+        return res.json({ dryRun: true, unresolvedProducts: Array.from(unresolvedProducts) });
       }
 
-      res.json({ ok: true, ordersImported, productsCreated, contactsCreated, rowsSkipped, rowsUnmatchedSkipped, preOrdersMoved });
+      if (preOrderConversionOps.length > 0) await PreOrder.bulkWrite(preOrderConversionOps);
+      const preOrdersMoved = preOrderConversionOps.length;
+
+      res.json({
+        ok: true,
+        ordersImported,
+        contactsCreated,
+        rowsSkipped,
+        rowsUnmatchedSkipped,
+        rowsProductUnresolvedSkipped,
+        preOrdersMoved,
+      });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
@@ -691,11 +745,15 @@ function createApp() {
   // pre-order never touches manualClosing though, since it isn't a confirmed
   // conversion yet (that's what the actual Order represents).
   async function resolvePreOrderRefs({ productName, customerPhone, customerName, orderDate }) {
+    // Never auto-creates a Product - the form's Produk field is already a
+    // dropdown of existing catalog products, so this only matters for the
+    // rare case of an edit resubmitting a name that's since been renamed or
+    // deleted from the catalog; left unresolved (undefined) rather than
+    // silently spawning a duplicate.
     let productId;
     if (productName) {
-      let product = await Product.findOne({ name: productName });
-      if (!product) product = await Product.create({ name: productName });
-      productId = product._id;
+      const product = await Product.findOne({ name: productName }).lean();
+      if (product) productId = product._id;
     }
     if (customerPhone) {
       const existingChat = await Chat.findById(customerPhone);
@@ -895,14 +953,30 @@ function createApp() {
       // an overlapping file doesn't pile up duplicates.
       const existing = await PreOrder.find({}).lean();
       const existingKeys = new Set(existing.map((p) => preOrderDedupKey(p.customerPhone, p.productName, p.orderDate)));
+
+      const dryRun = req.query.dryRun === 'true';
+      let productMapping = {};
+      if (req.body.productMapping) {
+        try {
+          productMapping = JSON.parse(req.body.productMapping);
+        } catch (e) {
+          // Malformed mapping just leaves those rows unresolved below.
+        }
+      }
       // Whoever runs a bulk import is the attributed creator for every row it
       // adds - there's no per-row "who entered this" in the sheet itself.
-      const importerCreator = await resolvePreOrderCreator(req, {});
+      // Skipped during dryRun since nothing is actually being created yet.
+      const importerCreator = dryRun ? {} : await resolvePreOrderCreator(req, {});
 
+      // Resolved, never created here - same reasoning as POST /api/orders/
+      // import: exact catalog name match first, then whatever the admin
+      // chose via `productMapping` for names the dry run flagged as unknown.
       const productCache = new Map();
       const chatCache = new Map();
+      const unresolvedProducts = new Set();
       let added = 0;
       let skippedDuplicate = 0;
+      let rowsProductUnresolvedSkipped = 0;
 
       for (let r = headerRowNumber + 1; r <= worksheet.rowCount; r++) {
         const row = worksheet.getRow(r);
@@ -920,27 +994,40 @@ function createApp() {
           continue;
         }
 
-        if (customerPhone && productName) {
-          if (!productCache.has(productName)) {
-            let product = await Product.findOne({ name: productName });
-            if (!product) product = await Product.create({ name: productName });
-            productCache.set(productName, product);
-          }
-          if (!chatCache.has(customerPhone)) {
-            let chat = await Chat.findById(customerPhone);
-            if (!chat) {
-              chat = await Chat.create({
-                _id: customerPhone,
-                name: customerName,
-                phone: customerPhone,
-                firstMessageDate: orderDate ? orderDate.toISOString() : undefined,
-                firstSeenAt: new Date().toISOString(),
-              });
-            }
-            chatCache.set(customerPhone, chat);
+        let resolvedProduct = null;
+        if (productName) {
+          if (productCache.has(productName)) {
+            resolvedProduct = productCache.get(productName);
+          } else {
+            const exact = await Product.findOne({ name: productName }).lean();
+            resolvedProduct = exact
+              ? { productId: exact._id, productName: exact.name }
+              : (productMapping[productName] || null);
+            productCache.set(productName, resolvedProduct);
           }
         }
-        const product = productCache.get(productName);
+
+        if (!resolvedProduct) {
+          if (productName) unresolvedProducts.add(productName);
+          if (!dryRun) rowsProductUnresolvedSkipped++;
+          continue;
+        }
+
+        if (dryRun) continue; // preview only - no writes below this point
+
+        if (customerPhone && !chatCache.has(customerPhone)) {
+          let chat = await Chat.findById(customerPhone);
+          if (!chat) {
+            chat = await Chat.create({
+              _id: customerPhone,
+              name: customerName,
+              phone: customerPhone,
+              firstMessageDate: orderDate ? orderDate.toISOString() : undefined,
+              firstSeenAt: new Date().toISOString(),
+            });
+          }
+          chatCache.set(customerPhone, chat);
+        }
 
         const noResiRaw = String(getCell(row, 'No Resi') || '').trim();
         const noResi = noResiRaw.split(/[;,]/).map((s) => s.trim()).filter(Boolean)[0] || undefined;
@@ -953,8 +1040,8 @@ function createApp() {
           customerName,
           customerPhone,
           address: getCell(row, 'Alamat Lengkap'),
-          productName,
-          productId: product ? product._id : undefined,
+          productName: resolvedProduct.productName,
+          productId: resolvedProduct.productId,
           qty: numOrUndefined(getCell(row, 'Qty')),
           unitPrice: numOrUndefined(getCell(row, 'Harga Satuan')),
           totalPrice: numOrUndefined(getCell(row, 'Total Harga')),
@@ -975,7 +1062,11 @@ function createApp() {
         added++;
       }
 
-      res.json({ ok: true, added, skippedDuplicate });
+      if (dryRun) {
+        return res.json({ dryRun: true, unresolvedProducts: Array.from(unresolvedProducts) });
+      }
+
+      res.json({ ok: true, added, skippedDuplicate, rowsProductUnresolvedSkipped });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

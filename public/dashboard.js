@@ -73,9 +73,12 @@ async function apiDelete(path) {
   return res.json();
 }
 
-async function apiUploadFile(path, file) {
+async function apiUploadFile(path, file, extraFields) {
   const formData = new FormData();
   formData.append('file', file);
+  if (extraFields) {
+    Object.entries(extraFields).forEach(([key, value]) => formData.append(key, value));
+  }
   // No Content-Type header here - the browser sets the multipart boundary
   // itself, setting it manually breaks the upload.
   const res = await fetch(path, { method: 'POST', headers: authHeaders(), body: formData });
@@ -667,7 +670,10 @@ function renderOrdersTable() {
       <td>${escapeHtml(order.ownerNumber || '-')}</td>
       <td>${escapeHtml(order.status || '-')}</td>
       <td>${escapeHtml(order.trackingNumber || '-')}</td>
-      <td><button class="delete-product-btn delete-order-btn" data-id="${escapeHtml(order.id)}">Hapus</button></td>
+      <td>
+        <button class="edit-product-btn edit-order-btn" data-id="${escapeHtml(order.id)}">Edit</button>
+        <button class="delete-product-btn delete-order-btn" data-id="${escapeHtml(order.id)}">Hapus</button>
+      </td>
     `;
     tbody.appendChild(tr);
   });
@@ -678,6 +684,9 @@ function renderOrdersTable() {
       else selectedOrderIds.delete(cb.dataset.id);
       updateOrdersSelectionUi();
     });
+  });
+  tbody.querySelectorAll('.edit-order-btn').forEach((btn) => {
+    btn.addEventListener('click', () => startEditOrder(btn.dataset.id));
   });
   tbody.querySelectorAll('.delete-order-btn').forEach((btn) => {
     btn.addEventListener('click', () => deleteOrder(btn.dataset.id));
@@ -734,10 +743,215 @@ async function loadOrders() {
   }
 }
 
+// ---- Orders (Pesanan) - edit modal ----
+
+let editingOrderId = null;
+
+// [form element id, Order field name] - covers every plain text/number field.
+// createdDate/receivedDate (dates) and productName (own select + price
+// autofill) are handled separately below.
+const ORDER_FORM_TEXT_FIELDS = [
+  ['orderCustomerName', 'customerName'],
+  ['orderCustomerPhone', 'customerPhone'],
+  ['orderAddress', 'address'],
+  ['orderCity', 'city'],
+  ['orderZipcode', 'zipcode'],
+  ['orderShippingType', 'shippingType'],
+  ['orderCourier', 'courier'],
+  ['orderOwnerNumber', 'ownerNumber'],
+  ['orderQty', 'qty'],
+  ['orderWeight', 'weight'],
+  ['orderVolume', 'volume'],
+  ['orderPrice', 'price'],
+  ['orderShippingCost', 'shippingCost'],
+  ['orderCodDiscount', 'codDiscount'],
+  ['orderCodFee', 'codFee'],
+  ['orderCodValue', 'codValue'],
+  ['orderStatus', 'status'],
+  ['orderTrackingNumber', 'trackingNumber'],
+  ['orderRefCode', 'refCode'],
+  ['orderReconciliationStatus', 'reconciliationStatus'],
+  ['orderWarehouseAdminName', 'warehouseAdminName'],
+  ['orderNote', 'note'],
+];
+
+// Options come from the Product catalog (same source of truth as the Produk
+// page and the Pra-Pesanan form), not free text.
+function populateOrderProductSelect(currentValue) {
+  const select = el('orderProductName');
+  const names = Array.from(new Set(allProducts.map((p) => p.name).filter(Boolean))).sort();
+  if (currentValue && !names.includes(currentValue)) names.unshift(currentValue);
+  select.innerHTML = '<option value="">Pilih Produk</option>' +
+    names.map((name) => `<option value="${escapeHtml(name)}" ${name === currentValue ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
+}
+
+// Harga Produk is pre-filled from the catalog price when a product is
+// picked, but stays a normal editable number field afterward - same
+// per-order-can-differ-from-catalog reasoning as the Pra-Pesanan form.
+function applyOrderProductPrice() {
+  const product = allProducts.find((p) => p.name === el('orderProductName').value);
+  if (product && product.price !== undefined && product.price !== null) {
+    el('orderPrice').value = product.price;
+  }
+}
+
+function readOrderForm() {
+  const body = {};
+  ORDER_FORM_TEXT_FIELDS.forEach(([elId, key]) => { body[key] = el(elId).value; });
+  body.productName = el('orderProductName').value;
+  body.createdDate = el('orderCreatedDate').value || undefined;
+  body.receivedDate = el('orderReceivedDate').value || undefined;
+  return body;
+}
+
+function fillOrderForm(order) {
+  ORDER_FORM_TEXT_FIELDS.forEach(([elId, key]) => { el(elId).value = order[key] ?? ''; });
+  el('orderCreatedDate').value = order.createdDate ? new Date(order.createdDate).toISOString().slice(0, 10) : '';
+  el('orderReceivedDate').value = order.receivedDate ? new Date(order.receivedDate).toISOString().slice(0, 10) : '';
+}
+
+function resetOrderForm() {
+  ORDER_FORM_TEXT_FIELDS.forEach(([elId]) => { el(elId).value = ''; });
+  el('orderCreatedDate').value = '';
+  el('orderReceivedDate').value = '';
+  editingOrderId = null;
+  el('orderFormMsg').textContent = '';
+  el('orderNumberDisplay').textContent = '';
+}
+
+function closeOrderFormModal() {
+  el('orderFormModal').classList.add('hidden');
+  resetOrderForm();
+}
+
+async function startEditOrder(id) {
+  const order = allOrders.find((o) => o.id === id);
+  if (!order) return;
+  await loadProducts();
+  populateOrderProductSelect(order.productName);
+  fillOrderForm(order);
+  editingOrderId = id;
+  el('orderFormMsg').textContent = '';
+  el('orderNumberDisplay').textContent = `No. Order: ${order.id}`;
+  el('orderFormModal').classList.remove('hidden');
+}
+
+async function saveOrder() {
+  if (!editingOrderId) return;
+  const body = readOrderForm();
+  try {
+    await apiPut(`/api/orders/${editingOrderId}`, body);
+    closeOrderFormModal();
+    await loadOrders();
+    // Editing the product name can create a new catalog entry, same as import.
+    await loadProducts();
+  } catch (e) {
+    if (e.message === 'unauthorized') {
+      handleApiError(e);
+      return;
+    }
+    el('orderFormMsg').textContent = e.message || 'Gagal menyimpan pesanan.';
+  }
+}
+
 // Shared by both the Pesanan page's import controls and the duplicate set on
 // the Pra-Pesanan page (same underlying action - a lincah import moves any
 // matching pre-orders out, so it's genuinely useful to trigger from either
 // page rather than forcing a page switch).
+// Two-phase import: a dry run first to see if any row's product couldn't be
+// resolved (no matching Pra-Pesanan, no exact catalog name); if so, prompt
+// the admin to map each one to an existing catalog product before actually
+// committing anything. Returns the final commit result, or null if the
+// admin cancelled the mapping popup (nothing was imported in that case).
+async function importFileWithProductResolution(url, file, msgElId) {
+  el(msgElId).textContent = 'Memeriksa file...';
+  const dryRunUrl = url + (url.includes('?') ? '&' : '?') + 'dryRun=true';
+  const preview = await apiUploadFile(dryRunUrl, file);
+  let productMapping;
+  if (preview.unresolvedProducts && preview.unresolvedProducts.length > 0) {
+    await loadProducts();
+    productMapping = await promptProductMapping(preview.unresolvedProducts);
+    if (!productMapping) return null;
+  }
+  el(msgElId).textContent = 'Mengimpor...';
+  return apiUploadFile(url, file, productMapping ? { productMapping: JSON.stringify(productMapping) } : undefined);
+}
+
+// Shows the shared "Pilih Produk" modal for raw product names (from an
+// import file) nothing could resolve automatically. Resolves to a
+// { rawName: { productId, productName } } map once every row is filled in
+// and the admin confirms "Lanjutkan Impor", or null if they cancel.
+function promptProductMapping(names) {
+  return new Promise((resolve) => {
+    const list = el('productMappingList');
+    const sortedProducts = allProducts.slice().sort((a, b) => a.name.localeCompare(b.name));
+    list.innerHTML = names.map((name) => {
+      const lower = name.trim().toLowerCase();
+      const options = sortedProducts
+        .map((p) => `<option value="${escapeHtml(p.id)}" data-name="${escapeHtml(p.name)}" ${p.name.trim().toLowerCase() === lower ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)
+        .join('');
+      return `
+        <label class="form-field" data-raw-name="${escapeHtml(name)}">
+          <span>${escapeHtml(name)}</span>
+          <select><option value="">Pilih Produk</option>${options}</select>
+        </label>`;
+    }).join('');
+    el('productMappingMsg').textContent = '';
+    el('productMappingModal').classList.remove('hidden');
+
+    const overlay = el('productMappingModal');
+    let mouseDownOnBackdrop = false;
+    function onBackdropMouseDown(e) {
+      mouseDownOnBackdrop = e.target === overlay;
+    }
+    // Same click-outside gate used by the other modals - only closes if both
+    // the mousedown and the click resolved to the overlay itself, so a text
+    // selection that ends outside the modal box doesn't dismiss it.
+    function onBackdropClick(e) {
+      if (mouseDownOnBackdrop && e.target === overlay) onCancel();
+      mouseDownOnBackdrop = false;
+    }
+
+    function cleanup() {
+      overlay.classList.add('hidden');
+      el('productMappingConfirmBtn').removeEventListener('click', onConfirm);
+      el('productMappingCancelBtn').removeEventListener('click', onCancel);
+      el('productMappingCloseBtn').removeEventListener('click', onCancel);
+      overlay.removeEventListener('mousedown', onBackdropMouseDown);
+      overlay.removeEventListener('click', onBackdropClick);
+    }
+    function onConfirm() {
+      const rows = list.querySelectorAll('[data-raw-name]');
+      const mapping = {};
+      let allFilled = true;
+      rows.forEach((rowEl) => {
+        const select = rowEl.querySelector('select');
+        if (!select.value) {
+          allFilled = false;
+          return;
+        }
+        const option = select.options[select.selectedIndex];
+        mapping[rowEl.dataset.rawName] = { productId: select.value, productName: option.dataset.name };
+      });
+      if (!allFilled) {
+        el('productMappingMsg').textContent = 'Pilih produk untuk semua baris dulu.';
+        return;
+      }
+      cleanup();
+      resolve(mapping);
+    }
+    function onCancel() {
+      cleanup();
+      resolve(null);
+    }
+    el('productMappingConfirmBtn').addEventListener('click', onConfirm);
+    el('productMappingCancelBtn').addEventListener('click', onCancel);
+    el('productMappingCloseBtn').addEventListener('click', onCancel);
+    overlay.addEventListener('mousedown', onBackdropMouseDown);
+    overlay.addEventListener('click', onBackdropClick);
+  });
+}
+
 async function importLincahOrders(ids) {
   const fileInput = el(ids.file);
   const file = fileInput.files[0];
@@ -747,23 +961,26 @@ async function importLincahOrders(ids) {
     return;
   }
   el(ids.btn).disabled = true;
-  el(ids.msg).textContent = 'Mengimpor...';
   try {
     const url = ids.onlyMatched ? '/api/orders/import?onlyMatched=true' : '/api/orders/import';
-    const result = await apiUploadFile(url, file);
+    const result = await importFileWithProductResolution(url, file, ids.msg);
+    if (!result) {
+      el(ids.msg).textContent = '';
+      return;
+    }
     el(ids.msg).textContent =
-      `${result.ordersImported} pesanan diimpor, ${result.productsCreated} produk baru, ` +
-      `${result.contactsCreated} kontak baru` +
+      `${result.ordersImported} pesanan diimpor, ${result.contactsCreated} kontak baru` +
       (result.rowsSkipped > 0 ? `, ${result.rowsSkipped} baris dilewati (tanpa nomor HP)` : '') +
       (result.rowsUnmatchedSkipped > 0 ? `, ${result.rowsUnmatchedSkipped} baris dilewati (tidak cocok dengan pra-pesanan)` : '') +
+      (result.rowsProductUnresolvedSkipped > 0 ? `, ${result.rowsProductUnresolvedSkipped} baris dilewati (produk tidak dipilih)` : '') +
       (result.preOrdersMoved > 0 ? `, ${result.preOrdersMoved} pra-pesanan dipindahkan ke pesanan` : '') + '.';
     fileInput.value = '';
     ordersPage = 1;
     await loadOrders();
     if (ids.modal) el(ids.modal).classList.add('hidden');
-    // The import can create new products/contacts, and can also delete
-    // matching pre-orders server-side - refresh all of them so nothing looks
-    // stale until manually reloaded.
+    // The import can create new contacts, and can also mark matching
+    // pre-orders converted server-side - refresh all of them so nothing
+    // looks stale until manually reloaded.
     await Promise.all([loadProducts(), loadData(), loadPreOrders()]);
   } catch (e) {
     if (e.message === 'unauthorized') {
@@ -1129,17 +1346,21 @@ async function importPreOrders() {
     return;
   }
   el('preOrderImportBtn').disabled = true;
-  el('preOrderImportMsg').textContent = 'Mengimpor...';
   try {
-    const result = await apiUploadFile('/api/preorders/import', file);
+    const result = await importFileWithProductResolution('/api/preorders/import', file, 'preOrderImportMsg');
+    if (!result) {
+      el('preOrderImportMsg').textContent = '';
+      return;
+    }
     el('preOrderImportMsg').textContent =
       `${result.added} pra-pesanan baru ditambahkan` +
-      (result.skippedDuplicate > 0 ? `, ${result.skippedDuplicate} dilewati (sudah ada)` : '') + '.';
+      (result.skippedDuplicate > 0 ? `, ${result.skippedDuplicate} dilewati (sudah ada)` : '') +
+      (result.rowsProductUnresolvedSkipped > 0 ? `, ${result.rowsProductUnresolvedSkipped} dilewati (produk tidak dipilih)` : '') + '.';
     fileInput.value = '';
     preOrdersPage = 1;
     await loadPreOrders();
     closePreOrderImportModal();
-    // Same as manual create - can create a new product/contact.
+    // Same as manual create - can create a new contact.
     await Promise.all([loadProducts(), loadData()]);
   } catch (e) {
     if (e.message === 'unauthorized') {
@@ -1322,6 +1543,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // to click outside - checking click alone closed the modal on every such
   // selection.
   [
+    ['orderFormModal', closeOrderFormModal],
     ['preOrderFormModal', closePreOrderFormModal],
     ['preOrderImportModal', closePreOrderImportModal],
     ['preOrderLincahImportModal', closePreOrderLincahImportModal],
@@ -1381,6 +1603,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateOrdersSelectionUi();
   });
   el('ordersDeleteSelectedBtn').addEventListener('click', deleteSelectedOrders);
+  el('orderSaveBtn').addEventListener('click', saveOrder);
+  el('orderCancelEditBtn').addEventListener('click', closeOrderFormModal);
+  el('orderFormCloseBtn').addEventListener('click', closeOrderFormModal);
+  el('orderProductName').addEventListener('change', applyOrderProductPrice);
 
   el('preOrdersSelectAllCheckbox').addEventListener('change', () => {
     const checked = el('preOrdersSelectAllCheckbox').checked;

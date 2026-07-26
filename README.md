@@ -30,13 +30,14 @@ Without the header (or with a wrong key) this should return `401`.
 - `PUT /api/settings` - upsert, body is the settings object directly
 - `GET /api/products`, `POST /api/products`, `PUT /api/products/:id`, `DELETE /api/products/:id` - product catalog CRUD
 - `GET /api/orders` - all imported orders, `{ orders: [...] }`
+- `PUT /api/orders/:id` - edit one order (same Product-catalog-matching side effect as import if `productName` changes)
 - `DELETE /api/orders/:id` - delete one order
 - `POST /api/orders/delete` - bulk delete, body is `{ ids: [...] }`
-- `POST /api/orders/import` - multipart upload, field name `file`, an .xlsx order export (see below). Optional `?onlyMatched=true` restricts it to rows that match an existing Pra-Pesanan, skipping everything else outright (used by the Pra-Pesanan page's "Impor dari Lincah" button; the Pesanan page's own import omits it and imports every row as before)
+- `POST /api/orders/import` - multipart upload, field name `file`, an .xlsx order export (see below). Optional `?onlyMatched=true` restricts it to rows that match an existing Pra-Pesanan, skipping everything else outright (used by the Pra-Pesanan page's "Impor dari Lincah" button; the Pesanan page's own import omits it and imports every row as before). Optional `?dryRun=true` + `productMapping` field for the product-resolution flow (see below)
 - `GET /api/preorders` - `?status=active` (default) for not-yet-converted pre-orders, `?status=converted` for ones that already graduated into an Order, `?status=all` for both (needed for historical/funnel reporting)
 - `POST /api/preorders`, `PUT /api/preorders/:id`, `DELETE /api/preorders/:id` - pre-order CRUD
 - `POST /api/preorders/delete` - bulk delete, body is `{ ids: [...] }`
-- `POST /api/preorders/import` - multipart upload, field name `file`, bulk-adds from the manual "Data Order" tracker sheet (see below)
+- `POST /api/preorders/import` - multipart upload, field name `file`, bulk-adds from the manual "Data Order" tracker sheet (see below). Same `?dryRun=true` + `productMapping` product-resolution flow as the order import
 - `GET /api/users/mini` - `{ users: [{id, email}, ...] }`, any authenticated user (unlike `GET /api/users` below) - just enough to populate the "Dibuat Oleh" picker on Pra-Pesanan
 - `GET /api/dashboard/stats` - server-side aggregated numbers for the Dashboard page (cards, charts, funnel) so the browser never has to fetch and crunch the whole `Chat`/`Order`/`PreOrder` collections just to show a few totals. Optional query params, all combinable: `from`, `to` (`YYYY-MM-DD`, inclusive), `ownerNumber`, `productName`, `createdByEmail`. Response shape: `{ cards, revenueByDay, chatsByDay, ordersByProduct, preOrdersByCreator, closingRateByOwner, leadsVsOrdersByProduct, productTaggingCoverage, funnel, filterOptions }` - `filterOptions` is always computed from the *unfiltered* data so the dropdowns never shrink based on the current selection.
 
@@ -77,11 +78,16 @@ overlapping export updates existing rows (e.g. picks up a status change)
 instead of duplicating them.
 
 Side effects per row, by design (not just parsing):
-- **Product**: matched by exact name against the `Product` catalog. If it
-  doesn't exist yet, it's created with *only* the name - price/dimensions are
-  left blank for the admin to fill in later on the Produk page. The order's
-  own `price` is a separate, per-order snapshot (see below), never written
-  back to the catalog.
+- **Product**: resolved, never created. In priority order: (1) if the row
+  matches an existing Pra-Pesanan (see the matching cascade below), that
+  Pra-Pesanan's own already-real catalog product wins - the row's raw
+  "Produk" text is ignored in favor of it; (2) otherwise an exact-name match
+  against the `Product` catalog; (3) otherwise whatever the admin explicitly
+  picked via `productMapping` (see "Product resolution" below). A row whose
+  product can't be resolved by any of those is skipped entirely, not
+  imported with a blank/guessed product. The order's own `price` is a
+  separate, per-order snapshot (see below), never written back to the
+  catalog regardless of which of the three resolved it.
 - **Contact**: matched by phone (`Chat._id`) against existing contacts. If
   new, it's created with `firstMessageDate` set to the order's `Tanggal
   Dibuat`, and `manualClosing: true` unless the order's `Status` is
@@ -98,10 +104,9 @@ Side effects per row, by design (not just parsing):
   built against - the actual per-order value lives in `Nilai COD` instead.
   `price` prefers `Harga Produk` when present and falls back to `Nilai COD`,
   so a future export that does populate it takes precedence.
-- After importing, any existing `PreOrder` that matches one of the imported
-  orders is marked **converted**, not deleted (see `consumeMatchingPreOrders()`
-  / `findPreOrderMatch()`) - it has "graduated" into this real Order, which
-  already holds the authoritative data. See Pre-Orders below.
+- Any existing `PreOrder` that matches a row (see `findPreOrderMatch()`) is
+  marked **converted**, not deleted - it has "graduated" into this real
+  Order, which already holds the authoritative data. See Pre-Orders below.
 
 With `?onlyMatched=true`, the gate flips: a row is only turned into an Order
 (and only gets its Product/Chat side effects) if it matches an existing,
@@ -110,6 +115,21 @@ skipped entirely, not imported. This is what the Pra-Pesanan page's "Impor
 dari Lincah" button uses, so that page never grows Orders/contacts for sales
 nobody tracked as a Pra-Pesanan first; the Pesanan page's own import omits
 the flag and keeps importing every row unconditionally, exactly as before.
+In practice `onlyMatched` imports never hit the "unresolved product" path
+below, since every row they process already has a matched Pra-Pesanan
+supplying its product.
+
+**Product resolution (`?dryRun=true` + `productMapping`)**: since this route
+never creates a `Product`, a row whose text doesn't match anything needs a
+human decision. Call the route once with `?dryRun=true` (same file, no
+writes at all) to get back `{ dryRun: true, unresolvedProducts: [...] }` -
+the distinct raw "Produk" names nothing could resolve. Show the admin a
+picker for each, then call the route again without `dryRun`, this time with
+a `productMapping` field (a JSON string, sent as a normal multipart text
+field alongside the same file): `{ "<raw name>": { "productId": "...",
+"productName": "..." } }`. Rows whose raw name isn't a key in the supplied
+mapping (or where dryRun wasn't run first) are simply skipped, counted in
+the response's `rowsProductUnresolvedSkipped`.
 
 ### Pre-Orders (Pra-Pesanan)
 
@@ -126,10 +146,16 @@ the first 5 rows since the sheet has a title banner above it) is just one way
 to add rows, additive and deduplicated by phone + product name + order date
 (the closest thing this sheet has to a natural key) so re-importing the
 same/an overlapping file doesn't pile up duplicates - it never touches or
-replaces existing rows. Same Product/Contact auto-create side effects as the
-Order import (see above) apply on both manual create/update and bulk import,
-except a pre-order **never** touches `manualClosing` - it isn't a confirmed
-conversion yet, only the actual dispatched Order represents that.
+replaces existing rows. Product resolution works the same way as the Order
+import (exact catalog name match, else the `?dryRun=true` + `productMapping`
+picker flow - see above; never auto-created) for both the bulk import and
+manual create/update via the form (the form's Produk field is a dropdown of
+existing products, so it can only send a name that's already unresolved in
+the rare case of an edit resubmitting a since-renamed/deleted one - that just
+leaves `productId` unset rather than creating a duplicate). Contact
+auto-create on new phone numbers still applies to both, except a pre-order
+**never** touches `manualClosing` - it isn't a confirmed conversion yet, only
+the actual dispatched Order represents that.
 
 **`orderNumber`** is a short, human-typeable code - `PP` + `YYYYMMDD` + 4
 random base36 characters, no separators, e.g. `PP202607269F3K` - generated
@@ -152,11 +178,11 @@ Defaults to whoever's logged in, but `POST`/`PUT` accept a `createdByUserId`
 in the body to attribute it to any other real user instead. A bulk import
 attributes every row it adds to whoever ran the import.
 
-**Moving to Pesanan on match** (`consumeMatchingPreOrders()` in
-`server/app.js`) is the main point of this feature, run every time
-`POST /api/orders/import` runs (so it also catches pre-orders left
-unmatched by an earlier lincah import, without re-touching the tracker
-sheet at all), most to least confident:
+**Moving to Pesanan on match** (`findPreOrderMatch()` in `server/app.js`) is
+the main point of this feature, run every time `POST /api/orders/import`
+runs (so it also catches pre-orders left unmatched by an earlier lincah
+import, without re-touching the tracker sheet at all), most to least
+confident:
 1. If a `PreOrder.orderNumber` matches an imported `Order.refCode`, that's
    the most deliberate signal there is - the user copied it into lincah's
    Kode Referensi field by hand.
