@@ -749,11 +749,13 @@ async function importLincahOrders(ids) {
   el(ids.btn).disabled = true;
   el(ids.msg).textContent = 'Mengimpor...';
   try {
-    const result = await apiUploadFile('/api/orders/import', file);
+    const url = ids.onlyMatched ? '/api/orders/import?onlyMatched=true' : '/api/orders/import';
+    const result = await apiUploadFile(url, file);
     el(ids.msg).textContent =
       `${result.ordersImported} pesanan diimpor, ${result.productsCreated} produk baru, ` +
       `${result.contactsCreated} kontak baru` +
       (result.rowsSkipped > 0 ? `, ${result.rowsSkipped} baris dilewati (tanpa nomor HP)` : '') +
+      (result.rowsUnmatchedSkipped > 0 ? `, ${result.rowsUnmatchedSkipped} baris dilewati (tidak cocok dengan pra-pesanan)` : '') +
       (result.preOrdersMoved > 0 ? `, ${result.preOrdersMoved} pra-pesanan dipindahkan ke pesanan` : '') + '.';
     fileInput.value = '';
     ordersPage = 1;
@@ -781,7 +783,7 @@ function importOrders() {
 function importOrdersFromPreOrderPage() {
   return importLincahOrders({
     file: 'preOrderLincahImportFile', msg: 'preOrderLincahImportMsg', btn: 'preOrderLincahImportBtn',
-    modal: 'preOrderLincahImportModal',
+    modal: 'preOrderLincahImportModal', onlyMatched: true,
   });
 }
 
@@ -810,6 +812,21 @@ function applyPreOrderProductPrice() {
   if (product && product.price !== undefined && product.price !== null) {
     el('preOrderUnitPrice').value = product.price;
   }
+  recalcPreOrderTotals();
+}
+
+// Total Harga/Total Tagihan are derived, read-only fields - not free text -
+// so a wrong manual total can never drift from what Qty/Harga Satuan/Ongkir
+// actually say. Total Harga = Qty x Harga Satuan; Total Tagihan = Total
+// Harga + Ongkir.
+function recalcPreOrderTotals() {
+  const qty = Number(el('preOrderQty').value) || 0;
+  const unitPrice = Number(el('preOrderUnitPrice').value) || 0;
+  const shippingCost = Number(el('preOrderShippingCost').value) || 0;
+  const totalPrice = qty * unitPrice;
+  const totalBill = totalPrice + shippingCost;
+  el('preOrderTotalPrice').value = totalPrice;
+  el('preOrderTotalBill').value = totalBill;
 }
 
 async function loadUsersMini() {
@@ -877,14 +894,16 @@ const PREORDER_FORM_TEXT_FIELDS = [
   ['preOrderShippingCost', 'shippingCost'],
   ['preOrderTotalBill', 'totalBill'],
   ['preOrderPaymentMethod', 'paymentMethod'],
-  ['preOrderPaymentStatus', 'paymentStatus'],
-  ['preOrderCourier', 'courier'],
-  ['preOrderNoResi', 'noResi'],
-  ['preOrderStatusOrder', 'statusOrder'],
   ['preOrderCampaignSource', 'campaignSource'],
   ['preOrderNote', 'note'],
-  ['preOrderCtt', 'ctt'],
 ];
+// paymentStatus/courier/noResi/statusOrder/ctt are intentionally not in the
+// form - nothing is known about them yet when a pre-order is first entered
+// (before it's even placed on lincah). They still exist on the PreOrder
+// model (populated later by the "Impor Data Order"/"Impor dari Lincah"
+// imports, or left blank) - the form simply never sends them, and the
+// backend's $set drops undefined keys, so editing a pre-order through this
+// form can't accidentally wipe out values an import already filled in.
 
 function readPreOrderForm() {
   const body = {};
@@ -901,6 +920,10 @@ function fillPreOrderForm(preOrder) {
   el('preOrderOrderDate').value = preOrder.orderDate ? new Date(preOrder.orderDate).toISOString().slice(0, 10) : '';
   el('preOrderLincah').checked = preOrder.lincah === true;
   el('preOrderAneka').checked = preOrder.aneka === true;
+  // Re-derive rather than trust whatever totalPrice/totalBill was already
+  // stored - keeps old rows consistent with the formula the moment they're
+  // opened for editing, instead of only on the next manual edit.
+  recalcPreOrderTotals();
 }
 
 function resetPreOrderForm() {
@@ -1020,6 +1043,7 @@ function renderPreOrdersTable() {
     tr.innerHTML = `
       <td><input type="checkbox" class="preorder-row-checkbox" data-id="${escapeHtml(preOrder.id)}" ${selectedPreOrderIds.has(preOrder.id) ? 'checked' : ''} /></td>
       <td>${escapeHtml(preOrder.orderNumber || '-')}</td>
+      <td>${escapeHtml(preOrder.convertedOrderId || '-')}</td>
       <td>${escapeHtml(dateDisplay)}</td>
       <td>${escapeHtml(preOrder.customerName || '-')}</td>
       <td>${escapeHtml(preOrder.customerPhone || '-')}</td>
@@ -1077,10 +1101,16 @@ async function deleteSelectedPreOrders() {
   }
 }
 
+function getPreOrderStatusFilter() {
+  const activeTab = document.querySelector('#preOrderStatusTabs .tab-btn.active');
+  return (activeTab && activeTab.dataset.status) || 'active';
+}
+
 async function loadPreOrders() {
   el('preOrdersLoadingState').classList.remove('hidden');
   try {
-    const { preOrders } = await apiGet('/api/preorders');
+    const status = getPreOrderStatusFilter();
+    const { preOrders } = await apiGet(`/api/preorders?status=${status}`);
     allPreOrders = preOrders;
     renderPreOrdersTable();
   } catch (e) {
@@ -1273,6 +1303,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   el('preOrderSaveBtn').addEventListener('click', savePreOrder);
   el('preOrderCancelEditBtn').addEventListener('click', closePreOrderFormModal);
   el('preOrderProductName').addEventListener('change', applyPreOrderProductPrice);
+  ['preOrderQty', 'preOrderUnitPrice', 'preOrderShippingCost'].forEach((id) => {
+    el(id).addEventListener('input', recalcPreOrderTotals);
+  });
 
   el('preOrderAddOpenBtn').addEventListener('click', openPreOrderAddModal);
   el('preOrderFormCloseBtn').addEventListener('click', closePreOrderFormModal);
@@ -1318,6 +1351,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   el('preOrderFilterCreator').addEventListener('input', () => {
     preOrdersPage = 1;
     renderPreOrdersTable();
+  });
+  document.querySelectorAll('#preOrderStatusTabs .tab-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('active')) return;
+      document.querySelectorAll('#preOrderStatusTabs .tab-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      preOrdersPage = 1;
+      loadPreOrders();
+    });
   });
 
   el('ordersPrevBtn').addEventListener('click', () => {

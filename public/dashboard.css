@@ -242,6 +242,28 @@ body {
 }
 .btn-primary:hover { background: var(--brand-dark); }
 
+/* ---------- Tabs (e.g. Pra-Pesanan status) ---------- */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 16px;
+}
+.tab-btn {
+  padding: 10px 16px;
+  border: none;
+  background: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.tab-btn:hover { color: var(--ink); }
+.tab-btn.active { color: var(--brand-dark); border-bottom-color: var(--brand); }
+
 /* ---------- Filters ---------- */
 .filters {
   display: flex;
@@ -310,8 +332,10 @@ body {
   top: calc(100% + 4px);
   left: 0;
   z-index: 30;
-  min-width: 240px;
-  max-height: 260px;
+  width: max-content;
+  min-width: 280px;
+  max-width: 320px;
+  max-height: 280px;
   overflow-y: auto;
   background: white;
   border: 1px solid var(--line);
@@ -320,18 +344,27 @@ body {
   padding: 6px;
 }
 .multiselect-panel.hidden { display: none; }
-.multiselect-option {
+.multiselect-panel .multiselect-option {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 8px;
   border-radius: 6px;
   font-size: 13px;
+  line-height: 1.35;
   color: var(--ink);
   cursor: pointer;
 }
 .multiselect-option:hover { background: var(--bg); }
-.multiselect-option input[type="checkbox"] { width: auto; margin: 0; }
+.multiselect-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  margin: 1px 0 0;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+.multiselect-option:first-child { font-weight: 600; }
 .multiselect-divider { border-top: 1px solid var(--line); margin: 4px 2px; }
 
 /* ---------- Stat cards ---------- */
@@ -618,6 +651,11 @@ tbody tr:hover { background: #fafcfb; }
   font-family: inherit;
   color: var(--ink);
   background: white;
+}
+.form-field input[readonly] {
+  background: var(--bg);
+  color: var(--ink-soft);
+  cursor: not-allowed;
 }
 .form-field-wide { grid-column: span 2; }
 .form-checkbox-row {

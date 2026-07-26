@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -13,7 +14,6 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const PreOrder = require('../models/PreOrder');
-const Counter = require('../models/Counter');
 
 const TOKEN_EXPIRY = '30d'; // personal tool, favor not re-logging-in over short-lived tokens
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -22,21 +22,43 @@ function normalizeMatchName(name) {
   return String(name || '').trim().toLowerCase();
 }
 
-// One document per counter name, incremented atomically - see Counter.js.
-async function getNextSequence(name) {
-  const doc = await Counter.findByIdAndUpdate(name, { $inc: { seq: 1 } }, { upsert: true, new: true });
-  return doc.seq;
+// 4 base36 characters (0-9, A-Z) seeded by *both* the exact moment this is
+// called (nanosecond-resolution) and a cryptographically random block - not
+// just a counter - so the suffix is unguessable and never repeats even if
+// called twice in the same millisecond.
+function generateRandomOrderSuffix(length) {
+  const timePart = process.hrtime.bigint().toString(36); // nanosecond-resolution clock
+  const randomPart = crypto.randomBytes(16).toString('hex'); // OS entropy, not Math.random()
+  const hash = crypto.createHash('sha256').update(`${timePart}:${randomPart}`).digest('hex');
+  const big = BigInt(`0x${hash.slice(0, 16)}`);
+  return big.toString(36).toUpperCase().padStart(length, '0').slice(-length);
 }
 
+// PPYYYYMMDDXXXX (no separators) - the date makes it sortable/readable at a
+// glance (and still ties it to "when"), the 4 random chars make it
+// unguessable within that day. Short enough to read off screen and hand-type
+// into lincah's own "Kode Referensi" field. Retries on the (astronomically
+// unlikely) chance of a same-day collision - the unique index on
+// PreOrder.orderNumber is still the real guarantee, this just avoids a
+// wasted round trip failing with a duplicate-key error on the common path.
 async function getNextPreOrderNumber() {
-  const seq = await getNextSequence('preOrderNumber');
-  return `PP-${String(seq).padStart(6, '0')}`;
+  const now = new Date();
+  const datePart = [now.getFullYear(), now.getMonth() + 1, now.getDate()]
+    .map((n, i) => String(n).padStart(i === 0 ? 4 : 2, '0'))
+    .join('');
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const candidate = `PP${datePart}${generateRandomOrderSuffix(4)}`;
+    // eslint-disable-next-line no-await-in-loop
+    const exists = await PreOrder.exists({ orderNumber: candidate });
+    if (!exists) return candidate;
+  }
+  throw new Error('gagal membuat No. Order unik setelah beberapa percobaan');
 }
 
-// For each freshly imported/upserted Order, look for an existing PreOrder
-// that represents the same sale and delete it - it has "graduated" into
-// this real Order, which already holds the authoritative data, so nothing
-// needs to be copied over. Matching, most to least confident:
+// The matching cascade shared by consumeMatchingPreOrders() (default, import-
+// everything-then-match flow) and the onlyMatched import mode (which needs
+// to know the match *before* deciding whether to create the Order at all).
+// Most to least confident:
 //   1. Reference code match (PreOrder.orderNumber === Order.refCode) - the
 //      pre-order's own generated number, meant to be copied into lincah's
 //      "Kode Referensi" field by hand when the order is actually placed
@@ -47,8 +69,41 @@ async function getNextPreOrderNumber() {
 //      pre-orders dated on/before this order, picking the closest one -
 //      unless there's a tie, which is left alone rather than guessed (a
 //      wrong match is worse than none, since a pre-order is just a plan).
-// Orders with no match, and pre-orders with no match, are both left
-// completely alone - that's the point, not a fallback.
+// Returns the matched pre-order doc, or null.
+function findPreOrderMatch({ refCode, trackingNumber, customerPhone, productName, createdDate }, availablePreOrders) {
+  if (refCode) {
+    const m = availablePreOrders.find((p) => p.orderNumber && p.orderNumber === refCode);
+    if (m) return m;
+  }
+
+  if (trackingNumber) {
+    const m = availablePreOrders.find((p) => p.noResi && p.noResi === trackingNumber);
+    if (m) return m;
+  }
+
+  if (!customerPhone || !productName || !createdDate) return null;
+  const productKey = normalizeMatchName(productName);
+  const candidates = availablePreOrders.filter((p) =>
+    p.customerPhone === customerPhone &&
+    normalizeMatchName(p.productName) === productKey &&
+    p.orderDate && new Date(p.orderDate) <= new Date(createdDate)
+  );
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => new Date(b.orderDate) - new Date(a.orderDate)); // closest-from-below first
+  const closestGapMs = new Date(createdDate) - new Date(candidates[0].orderDate);
+  const tiedClosest = candidates.filter((c) => new Date(createdDate) - new Date(c.orderDate) === closestGapMs);
+  if (tiedClosest.length !== 1) return null; // ambiguous - leave alone
+
+  return tiedClosest[0];
+}
+
+// For each freshly imported/upserted Order, look for an existing PreOrder
+// that represents the same sale and mark it converted - it has "graduated"
+// into this real Order, which already holds the authoritative data,
+// so nothing needs to be copied over. Orders with no match, and pre-orders
+// with no match, are both left completely alone - that's the point, not a
+// fallback.
 async function consumeMatchingPreOrders(orders) {
   // Only ever match against pre-orders not already converted - a converted
   // one keeps the order it originally matched, never gets reassigned.
@@ -57,40 +112,8 @@ async function consumeMatchingPreOrders(orders) {
 
   orders.forEach((order) => {
     const available = allPreOrders.filter((p) => !consumed.has(String(p._id)));
-
-    const refCodeMatch = order.refCode
-      ? available.find((p) => p.orderNumber && p.orderNumber === order.refCode)
-      : null;
-    if (refCodeMatch) {
-      consumed.set(String(refCodeMatch._id), order._id || order.id);
-      return;
-    }
-
-    const resiMatch = order.trackingNumber
-      ? available.find((p) => p.noResi && p.noResi === order.trackingNumber)
-      : null;
-    if (resiMatch) {
-      consumed.set(String(resiMatch._id), order._id || order.id);
-      return;
-    }
-
-    if (!order.customerPhone || !order.productName || !order.createdDate) return;
-    const productKey = normalizeMatchName(order.productName);
-    const candidates = available.filter((p) =>
-      p.customerPhone === order.customerPhone &&
-      normalizeMatchName(p.productName) === productKey &&
-      p.orderDate && new Date(p.orderDate) <= new Date(order.createdDate)
-    );
-    if (candidates.length === 0) return;
-
-    candidates.sort((a, b) => new Date(b.orderDate) - new Date(a.orderDate)); // closest-from-below first
-    const closestGapMs = new Date(order.createdDate) - new Date(candidates[0].orderDate);
-    const tiedClosest = candidates.filter(
-      (c) => new Date(order.createdDate) - new Date(c.orderDate) === closestGapMs
-    );
-    if (tiedClosest.length !== 1) return; // ambiguous - leave alone
-
-    consumed.set(String(tiedClosest[0]._id), order._id || order.id);
+    const match = findPreOrderMatch(order, available);
+    if (match) consumed.set(String(match._id), order._id || order.id);
   });
 
   if (consumed.size > 0) {
@@ -438,6 +461,10 @@ function createApp() {
     }
   });
 
+  // ?onlyMatched=true restricts this import to rows that match an existing
+  // Pra-Pesanan (see findPreOrderMatch above) - anything unmatched is
+  // skipped entirely rather than added as a new Order. Omitted/false imports
+  // every row unconditionally, matching being an afterward side effect.
   app.post('/api/orders/import', requireAuth, upload.single('file'), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'file is required (field name "file")' });
@@ -470,11 +497,24 @@ function createApp() {
       const productCache = new Map(); // name -> product doc
       const chatCache = new Map(); // phone -> chat doc
 
+      // ?onlyMatched=true - used by the Pra-Pesanan page's "Impor dari
+      // Lincah" button: only rows that match an existing (not yet converted)
+      // Pra-Pesanan get turned into an Order at all; everything else is
+      // skipped outright (no Order, no new Product/Chat side effects). The
+      // Pesanan page's own import omits this flag and keeps importing every
+      // row like before, matching being a side effect rather than a gate.
+      const onlyMatched = req.query.onlyMatched === 'true';
+      let availablePreOrders = onlyMatched
+        ? await PreOrder.find({ convertedOrderId: { $exists: false } }).lean()
+        : null;
+      const preOrderConversionOps = [];
+
       let ordersImported = 0;
       let productsCreated = 0;
       let contactsCreated = 0;
       let rowsSkipped = 0;
-      const importedOrders = []; // fed to consumeMatchingPreOrders() below
+      let rowsUnmatchedSkipped = 0;
+      const importedOrders = []; // fed to consumeMatchingPreOrders() below (default mode only)
 
       for (let r = 2; r <= worksheet.rowCount; r++) {
         const row = worksheet.getRow(r);
@@ -487,10 +527,26 @@ function createApp() {
         const status = String(getCell(row, 'Status') || '').trim();
         const ownerNumber = normalizeOwnerNumber(getCell(row, 'Nomor Admin Gudang'));
         const createdDate = parseIndonesianDate(getCell(row, 'Tanggal Dibuat'));
+        const trackingNumber = getCell(row, 'Resi');
+        const refCode = getCell(row, 'Kode Referensi');
 
         if (!customerPhone) {
           rowsSkipped++;
           continue;
+        }
+
+        let matchedPreOrder = null;
+        if (onlyMatched) {
+          matchedPreOrder = findPreOrderMatch(
+            { refCode, trackingNumber, customerPhone, productName, createdDate },
+            availablePreOrders
+          );
+          if (!matchedPreOrder) {
+            rowsUnmatchedSkipped++;
+            continue;
+          }
+          // Don't let a later row in the same file match this pre-order again.
+          availablePreOrders = availablePreOrders.filter((p) => String(p._id) !== String(matchedPreOrder._id));
         }
 
         // Match the master Product catalog by exact name (assumed unique).
@@ -536,8 +592,6 @@ function createApp() {
 
         const volumeRaw = getCell(row, 'Volume');
         const zipcodeRaw = getCell(row, 'Zipcode');
-        const trackingNumber = getCell(row, 'Resi');
-        const refCode = getCell(row, 'Kode Referensi');
 
         importedOrders.push({ id: noOrder, customerPhone, productName, createdDate, trackingNumber, refCode });
 
@@ -580,11 +634,26 @@ function createApp() {
           { upsert: true, new: true }
         );
         ordersImported++;
+
+        if (onlyMatched && matchedPreOrder) {
+          preOrderConversionOps.push({
+            updateOne: {
+              filter: { _id: matchedPreOrder._id },
+              update: { $set: { convertedOrderId: noOrder, convertedAt: new Date() } },
+            },
+          });
+        }
       }
 
-      const preOrdersMoved = await consumeMatchingPreOrders(importedOrders);
+      let preOrdersMoved;
+      if (onlyMatched) {
+        if (preOrderConversionOps.length > 0) await PreOrder.bulkWrite(preOrderConversionOps);
+        preOrdersMoved = preOrderConversionOps.length;
+      } else {
+        preOrdersMoved = await consumeMatchingPreOrders(importedOrders);
+      }
 
-      res.json({ ok: true, ordersImported, productsCreated, contactsCreated, rowsSkipped, preOrdersMoved });
+      res.json({ ok: true, ordersImported, productsCreated, contactsCreated, rowsSkipped, rowsUnmatchedSkipped, preOrdersMoved });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
@@ -681,12 +750,18 @@ function createApp() {
     };
   }
 
+  // ?status=active (default) - not yet converted, the "disappears once it
+  // becomes a real order" list the UI has always shown.
+  // ?status=converted - only the ones that already graduated into a Pesanan
+  // (used by the Pra-Pesanan page's "Sudah jadi Pesanan" filter).
+  // ?status=all - both, used for GET /api/dashboard/stats' historical
+  // conversion counting.
   app.get('/api/preorders', requireAuth, async (req, res) => {
     try {
-      // Converted ones are excluded by default - same "disappears once it
-      // becomes a real order" list the UI has always shown. They still exist
-      // for GET /api/dashboard/stats' historical conversion counting.
-      const filter = req.query.includeConverted === 'true' ? {} : { convertedOrderId: { $exists: false } };
+      const status = req.query.status || (req.query.includeConverted === 'true' ? 'all' : 'active');
+      const filter = status === 'all' ? {}
+        : status === 'converted' ? { convertedOrderId: { $exists: true } }
+        : { convertedOrderId: { $exists: false } };
       const docs = await PreOrder.find(filter).sort({ orderDate: -1 }).lean();
       const preOrders = docs.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }));
       res.json({ preOrders });

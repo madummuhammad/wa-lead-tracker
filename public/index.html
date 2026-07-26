@@ -355,6 +355,11 @@
           </div>
         </header>
 
+        <div class="tabs" id="preOrderStatusTabs">
+          <button type="button" class="tab-btn active" data-status="active">Belum jadi Pesanan</button>
+          <button type="button" class="tab-btn" data-status="converted">Sudah jadi Pesanan</button>
+        </div>
+
         <section class="filters">
           <label>Filter CS
             <select id="preOrderFilterCreator">
@@ -374,6 +379,7 @@
               <tr>
                 <th><input type="checkbox" id="preOrdersSelectAllCheckbox" title="Pilih semua" /></th>
                 <th>No. Order</th>
+                <th>No. Order Pesanan</th>
                 <th>Tanggal Order</th>
                 <th>Nama Customer</th>
                 <th>No HP</th>
@@ -448,7 +454,7 @@
                 </label>
                 <label class="form-field">
                   <span>Total Harga</span>
-                  <input type="number" id="preOrderTotalPrice" min="0" />
+                  <input type="number" id="preOrderTotalPrice" min="0" readonly title="Otomatis: Qty × Harga Satuan" />
                 </label>
                 <label class="form-field">
                   <span>Ongkir</span>
@@ -456,7 +462,7 @@
                 </label>
                 <label class="form-field">
                   <span>Total Tagihan</span>
-                  <input type="number" id="preOrderTotalBill" min="0" />
+                  <input type="number" id="preOrderTotalBill" min="0" readonly title="Otomatis: Total Harga + Ongkir" />
                 </label>
               </div>
             </div>
@@ -466,23 +472,11 @@
               <div class="form-grid">
                 <label class="form-field">
                   <span>Metode Bayar</span>
-                  <input type="text" id="preOrderPaymentMethod" />
-                </label>
-                <label class="form-field">
-                  <span>Status Bayar</span>
-                  <input type="text" id="preOrderPaymentStatus" />
-                </label>
-                <label class="form-field">
-                  <span>Kurir</span>
-                  <input type="text" id="preOrderCourier" />
-                </label>
-                <label class="form-field">
-                  <span>No Resi</span>
-                  <input type="text" id="preOrderNoResi" />
-                </label>
-                <label class="form-field">
-                  <span>Status Order</span>
-                  <input type="text" id="preOrderStatusOrder" />
+                  <select id="preOrderPaymentMethod">
+                    <option value="">Pilih Metode Bayar</option>
+                    <option value="COD">COD</option>
+                    <option value="Non-COD">Non-COD</option>
+                  </select>
                 </label>
               </div>
             </div>
@@ -497,10 +491,6 @@
                 <label class="form-field form-field-wide">
                   <span>Catatan</span>
                   <input type="text" id="preOrderNote" />
-                </label>
-                <label class="form-field">
-                  <span>CTT</span>
-                  <input type="text" id="preOrderCtt" />
                 </label>
                 <div class="form-field">
                   <span>&nbsp;</span>
@@ -548,10 +538,12 @@
               <button class="modal-close-btn" id="preOrderLincahImportCloseBtn">&times;</button>
             </div>
             <p class="hint">
-              Pra-pesanan yang cocok dengan pesanan yang diimpor (lewat No Resi,
-              atau nomor HP + nama produk + tanggal terdekat) otomatis dihapus
-              dari daftar di halaman ini - datanya sudah ada di halaman Pesanan.
-              Yang tidak cocok dibiarkan apa adanya.
+              Hanya baris yang cocok dengan Pra-Pesanan (lewat No. Order/Kode
+              Referensi, No Resi, atau nomor HP + nama produk + tanggal
+              terdekat) yang akan ditambahkan ke halaman Pesanan. Pra-Pesanan
+              yang cocok otomatis hilang dari daftar di halaman ini - datanya
+              sudah ada di halaman Pesanan. Baris yang tidak cocok dilewati
+              sepenuhnya, tidak ditambahkan ke Pesanan.
             </p>
             <div class="user-form">
               <input type="file" id="preOrderLincahImportFile" accept=".xlsx" />

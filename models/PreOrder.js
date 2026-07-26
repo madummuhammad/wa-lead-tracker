@@ -18,11 +18,14 @@ const preOrderSchema = new mongoose.Schema(
   {
     convertedOrderId: String, // Order._id this graduated into, once matched
     convertedAt: Date,
-    // Short, human-typeable code (e.g. "PP-000123") generated once at
-    // creation and never changed - meant to be copied into lincah.id's
+    // Short, human-typeable code (e.g. "PP202607269F3K") generated once
+    // at creation and never changed - meant to be copied into lincah.id's
     // "Kode Referensi" field when the order is actually placed there, so
     // the resulting Order.refCode gives consumeMatchingPreOrders() an exact,
     // unambiguous match instead of relying only on resi or phone+product+date.
+    // The date prefix is just for readability/sorting - the trailing 4 chars
+    // are what actually make it unguessable (see getNextPreOrderNumber() in
+    // server/app.js), not a sequential counter.
     orderNumber: { type: String, unique: true },
     createdByUserId: String, // which team member (see User) entered this
     createdByEmail: String, // denormalized for display without a join

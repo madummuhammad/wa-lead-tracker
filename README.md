@@ -32,8 +32,8 @@ Without the header (or with a wrong key) this should return `401`.
 - `GET /api/orders` - all imported orders, `{ orders: [...] }`
 - `DELETE /api/orders/:id` - delete one order
 - `POST /api/orders/delete` - bulk delete, body is `{ ids: [...] }`
-- `POST /api/orders/import` - multipart upload, field name `file`, an .xlsx order export (see below)
-- `GET /api/preorders` - active (non-converted) pre-orders by default; pass `?includeConverted=true` to also get ones that already graduated into an Order (needed for historical/funnel reporting)
+- `POST /api/orders/import` - multipart upload, field name `file`, an .xlsx order export (see below). Optional `?onlyMatched=true` restricts it to rows that match an existing Pra-Pesanan, skipping everything else outright (used by the Pra-Pesanan page's "Impor dari Lincah" button; the Pesanan page's own import omits it and imports every row as before)
+- `GET /api/preorders` - `?status=active` (default) for not-yet-converted pre-orders, `?status=converted` for ones that already graduated into an Order, `?status=all` for both (needed for historical/funnel reporting)
 - `POST /api/preorders`, `PUT /api/preorders/:id`, `DELETE /api/preorders/:id` - pre-order CRUD
 - `POST /api/preorders/delete` - bulk delete, body is `{ ids: [...] }`
 - `POST /api/preorders/import` - multipart upload, field name `file`, bulk-adds from the manual "Data Order" tracker sheet (see below)
@@ -77,9 +77,17 @@ Side effects per row, by design (not just parsing):
   `price` prefers `Harga Produk` when present and falls back to `Nilai COD`,
   so a future export that does populate it takes precedence.
 - After importing, any existing `PreOrder` that matches one of the imported
-  orders is **deleted** (see `consumeMatchingPreOrders()`) - it has
-  "graduated" into this real Order, which already holds the authoritative
-  data, so there's nothing left to keep it around for. See Pre-Orders below.
+  orders is marked **converted**, not deleted (see `consumeMatchingPreOrders()`
+  / `findPreOrderMatch()`) - it has "graduated" into this real Order, which
+  already holds the authoritative data. See Pre-Orders below.
+
+With `?onlyMatched=true`, the gate flips: a row is only turned into an Order
+(and only gets its Product/Chat side effects) if it matches an existing,
+not-yet-converted `PreOrder` via that same cascade - unmatched rows are
+skipped entirely, not imported. This is what the Pra-Pesanan page's "Impor
+dari Lincah" button uses, so that page never grows Orders/contacts for sales
+nobody tracked as a Pra-Pesanan first; the Pesanan page's own import omits
+the flag and keeps importing every row unconditionally, exactly as before.
 
 ### Pre-Orders (Pra-Pesanan)
 
@@ -101,13 +109,19 @@ Order import (see above) apply on both manual create/update and bulk import,
 except a pre-order **never** touches `manualClosing` - it isn't a confirmed
 conversion yet, only the actual dispatched Order represents that.
 
-**`orderNumber`** is a short, sequential, human-typeable code (`PP-000001`,
-`PP-000002`, ...) generated once at creation via `getNextSequence()` /
-`Counter` (a `_id`+`seq` doc incremented atomically - Mongoose has no native
-autoincrement) and never changed afterward. It's meant to be copied by hand
-into lincah.id's own "Kode Referensi" field when the order is actually placed
-there, so the resulting `Order.refCode` gives an exact, unambiguous link back
-- see matching below.
+**`orderNumber`** is a short, human-typeable code - `PP` + `YYYYMMDD` + 4
+random base36 characters, no separators, e.g. `PP202607269F3K` - generated
+once at creation via `generateRandomOrderSuffix()`/`getNextPreOrderNumber()`
+and never changed afterward. The date makes it sortable/readable at a glance;
+the trailing 4 characters are what actually make it unguessable - seeded
+from both a nanosecond-resolution clock reading and `crypto.randomBytes`
+(real OS entropy, not `Math.random()`), then hashed, so nothing about one
+code lets you guess another created the same day. `getNextPreOrderNumber()`
+retries (up to 5x) on the astronomically unlikely chance of a same-day
+collision; the `unique` index on `orderNumber` is the actual guarantee
+either way. It's meant to be copied by hand into lincah.id's own "Kode
+Referensi" field when the order is actually placed there, so the resulting
+`Order.refCode` gives an exact, unambiguous link back - see matching below.
 
 **`createdByUserId`/`createdByEmail`** track which team member (see `User`)
 is attributed to a pre-order - a business attribution field the owner can
