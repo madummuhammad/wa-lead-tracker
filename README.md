@@ -42,6 +42,28 @@ Without the header (or with a wrong key) this should return `401`.
 
 All routes under `/api` require `Authorization: Bearer <API_KEY>`.
 
+### Users & roles
+
+Real dashboard users (as opposed to the extension's own `API_KEY`) log in via
+`POST /api/auth/login` and are managed via `GET`/`POST /api/users`,
+`DELETE /api/users/:id` - all three require `role: 'admin'` (`requireAdmin`
+middleware). `User.role` is one of:
+
+- **`admin`** - full access, including the "Pengaturan User" page (create/
+  delete other accounts).
+- **`cs`** - customer service. Sees Dashboard, Kontak, Produk, Pesanan, and
+  Pra-Pesanan only - "Pengaturan User" is hidden client-side (`showAppScreen()`
+  toggles `usersNavBtn` based on role) and blocked server-side regardless
+  (`requireAdmin` rejects anything that isn't `admin`, so hiding the nav
+  button is UX, not the actual security boundary).
+- **`user`** - legacy default from before the `cs` role existed; behaves
+  identically to `cs` today (same pages hidden/visible).
+
+None of the other API routes (`chats`, `products`, `orders`, `preorders`,
+`dashboard/stats`) are role-gated beyond being logged in at all - a `cs`
+account has the same data access as `admin` on every page it can see, the
+restriction is purely about which pages are reachable from the sidebar.
+
 ### Order import (`POST /api/orders/import`)
 
 Parses the COD fulfillment platform's order export (columns: `No. Order`,

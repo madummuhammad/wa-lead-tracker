@@ -214,7 +214,7 @@ function createApp() {
       const user = await User.create({
         email: normalizedEmail,
         passwordHash,
-        role: role === 'admin' ? 'admin' : 'user',
+        role: ['admin', 'cs'].includes(role) ? role : 'user',
       });
       res.json({ ok: true, user: { id: user._id, email: user.email, role: user.role } });
     } catch (e) {
