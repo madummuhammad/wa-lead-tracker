@@ -14,6 +14,7 @@ const User = require('../models/User');
 const Product = require('../models/Product');
 const Order = require('../models/Order');
 const PreOrder = require('../models/PreOrder');
+const MessageTemplate = require('../models/MessageTemplate');
 
 const TOKEN_EXPIRY = '30d'; // personal tool, favor not re-logging-in over short-lived tokens
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -351,6 +352,58 @@ function createApp() {
   app.delete('/api/products/:id', requireAuth, async (req, res) => {
     try {
       await Product.findByIdAndDelete(req.params.id);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // ---- Message templates (extension's "Kabar Pra-Pesanan" quick replies) ----
+  // Managed here, mirrored read-only into the extension - same pattern as
+  // the Product catalog above (see wa-ektension/background.js
+  // pullMessageTemplates). No CS/admin distinction: any authenticated user
+  // can manage these, matching Product's own access level.
+
+  app.get('/api/message-templates', requireAuth, async (req, res) => {
+    try {
+      const docs = await MessageTemplate.find({}).sort({ createdAt: 1 }).lean();
+      const templates = docs.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }));
+      res.json({ templates });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post('/api/message-templates', requireAuth, async (req, res) => {
+    try {
+      const { label, text } = req.body || {};
+      if (!label || !text) return res.status(400).json({ error: 'label and text are required' });
+      const doc = await MessageTemplate.create({ label: String(label).trim(), text: String(text) });
+      res.json({ ok: true, template: { id: doc._id, label: doc.label, text: doc.text } });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.put('/api/message-templates/:id', requireAuth, async (req, res) => {
+    try {
+      const { label, text } = req.body || {};
+      if (!label || !text) return res.status(400).json({ error: 'label and text are required' });
+      const doc = await MessageTemplate.findByIdAndUpdate(
+        req.params.id,
+        { $set: { label: String(label).trim(), text: String(text) } },
+        { new: true }
+      );
+      if (!doc) return res.status(404).json({ error: 'template not found' });
+      res.json({ ok: true, template: { id: doc._id, label: doc.label, text: doc.text } });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.delete('/api/message-templates/:id', requireAuth, async (req, res) => {
+    try {
+      await MessageTemplate.findByIdAndDelete(req.params.id);
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: String(e) });

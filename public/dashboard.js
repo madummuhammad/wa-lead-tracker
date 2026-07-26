@@ -128,6 +128,84 @@ function matchesDateFilter(chat, filter) {
   return true; // 'all'
 }
 
+// Plain Dari/Sampai range check (inclusive) - simpler than matchesDateFilter
+// above, which also handles Kontak's single-date/no-date modes. Used by the
+// Pesanan and Pra-Pesanan filter bars.
+function withinDateRange(dateValue, from, to) {
+  if (!from && !to) return true;
+  if (!dateValue) return false;
+  const t = new Date(dateValue).getTime();
+  if (from && t < new Date(`${from}T00:00:00`).getTime()) return false;
+  if (to && t > new Date(`${to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000 - 1) return false;
+  return true;
+}
+
+// Generic checkbox multi-select ("Semua ..." + one row per option), shared by
+// the Pesanan and Pra-Pesanan Produk filters. (Dashboard's own Produk filter
+// predates this and keeps its separate, already-shipped implementation.)
+const multiselectSelections = {}; // name -> Set<string>
+
+function getMultiselectSelection(name) {
+  if (!multiselectSelections[name]) multiselectSelections[name] = new Set();
+  return multiselectSelections[name];
+}
+
+function updateMultiselectToggleLabel(name, ids) {
+  const selected = getMultiselectSelection(name);
+  const btn = el(ids.toggle);
+  if (selected.size === 0) btn.textContent = 'Semua produk';
+  else if (selected.size === 1) btn.textContent = chartTruncate(Array.from(selected)[0], 22);
+  else btn.textContent = `${selected.size} produk dipilih`;
+}
+
+function renderMultiselectPanel(name, ids, options) {
+  // Drop selections for values that no longer exist in the current data.
+  const pruned = new Set(Array.from(getMultiselectSelection(name)).filter((v) => options.includes(v)));
+  multiselectSelections[name] = pruned;
+
+  const panel = el(ids.panel);
+  panel.innerHTML = `
+    <label class="multiselect-option">
+      <input type="checkbox" id="${ids.all}" ${pruned.size === 0 ? 'checked' : ''} />
+      Semua produk
+    </label>
+    <div class="multiselect-divider"></div>
+    ${options.map((o) => `
+      <label class="multiselect-option">
+        <input type="checkbox" class="multiselect-item" value="${escapeHtml(o)}" ${pruned.has(o) ? 'checked' : ''} />
+        ${escapeHtml(o)}
+      </label>`).join('')}
+  `;
+  updateMultiselectToggleLabel(name, ids);
+}
+
+function wireMultiselect(name, ids, onChange) {
+  el(ids.toggle).addEventListener('click', (e) => {
+    e.stopPropagation();
+    el(ids.panel).classList.toggle('hidden');
+  });
+  el(ids.panel).addEventListener('change', (e) => {
+    const selected = getMultiselectSelection(name);
+    if (e.target.id === ids.all) {
+      if (e.target.checked) {
+        selected.clear();
+        el(ids.panel).querySelectorAll('.multiselect-item').forEach((cb) => { cb.checked = false; });
+      } else {
+        e.target.checked = true; // deselecting "Semua produk" alone means nothing
+      }
+    } else if (e.target.classList.contains('multiselect-item')) {
+      if (e.target.checked) selected.add(e.target.value);
+      else selected.delete(e.target.value);
+      el(ids.all).checked = selected.size === 0;
+    }
+    updateMultiselectToggleLabel(name, ids);
+    onChange();
+  });
+  document.addEventListener('click', (e) => {
+    if (!el(ids.multi).contains(e.target)) el(ids.panel).classList.add('hidden');
+  });
+}
+
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -604,6 +682,11 @@ async function deleteProduct(id) {
 
 // ---- Orders (Pesanan) ----
 
+const ORDER_PRODUCT_MULTISELECT = {
+  multi: 'orderFilterProductMulti', toggle: 'orderFilterProductToggle',
+  panel: 'orderFilterProductPanel', all: 'orderFilterProductAll',
+};
+
 function populateOrderStatusSelect(select) {
   const statuses = Array.from(new Set(allOrders.map((o) => o.status).filter(Boolean))).sort();
   const previousValue = select.value || 'all';
@@ -612,13 +695,32 @@ function populateOrderStatusSelect(select) {
   select.value = statuses.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
 }
 
+function populateOrderOwnerSelect(select) {
+  const owners = Array.from(new Set(allOrders.map((o) => o.ownerNumber).filter(Boolean))).sort();
+  const previousValue = select.value || 'all';
+  select.innerHTML = '<option value="all">Semua akun</option>' +
+    owners.map((o) => `<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
+  select.value = owners.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
+}
+
 function renderOrdersTable() {
   populateOrderStatusSelect(el('orderFilterStatus'));
+  populateOrderOwnerSelect(el('orderFilterOwner'));
+  const orderProductNames = Array.from(new Set(allOrders.map((o) => o.productName).filter(Boolean))).sort();
+  renderMultiselectPanel('orderProduct', ORDER_PRODUCT_MULTISELECT, orderProductNames);
+
   const statusFilter = el('orderFilterStatus').value;
+  const ownerFilter = el('orderFilterOwner').value;
+  const from = el('orderFilterFrom').value;
+  const to = el('orderFilterTo').value;
+  const selectedProducts = getMultiselectSelection('orderProduct');
   const q = el('orderSearchBox').value.trim().toLowerCase();
 
   const filtered = allOrders.filter((order) => {
     if (statusFilter !== 'all' && (order.status || '') !== statusFilter) return false;
+    if (ownerFilter !== 'all' && (order.ownerNumber || '') !== ownerFilter) return false;
+    if (selectedProducts.size > 0 && !selectedProducts.has(order.productName || '')) return false;
+    if (!withinDateRange(order.createdDate, from, to)) return false;
     if (q) {
       const hay = `${order.customerName || ''} ${order.customerPhone || ''} ${order.trackingNumber || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
@@ -1208,6 +1310,11 @@ async function deletePreOrder(id) {
   }
 }
 
+const PREORDER_PRODUCT_MULTISELECT = {
+  multi: 'preOrderFilterProductMulti', toggle: 'preOrderFilterProductToggle',
+  panel: 'preOrderFilterProductPanel', all: 'preOrderFilterProductAll',
+};
+
 function populatePreOrderCreatorFilterSelect(select) {
   const creators = Array.from(new Set(allPreOrders.map((p) => p.createdByEmail).filter(Boolean))).sort();
   const previousValue = select.value || 'all';
@@ -1218,10 +1325,18 @@ function populatePreOrderCreatorFilterSelect(select) {
 
 function renderPreOrdersTable() {
   populatePreOrderCreatorFilterSelect(el('preOrderFilterCreator'));
+  const preOrderProductNames = Array.from(new Set(allPreOrders.map((p) => p.productName).filter(Boolean))).sort();
+  renderMultiselectPanel('preOrderProduct', PREORDER_PRODUCT_MULTISELECT, preOrderProductNames);
+
   const creatorFilter = el('preOrderFilterCreator').value;
+  const from = el('preOrderFilterFrom').value;
+  const to = el('preOrderFilterTo').value;
+  const selectedProducts = getMultiselectSelection('preOrderProduct');
 
   const filtered = allPreOrders.filter((p) => {
     if (creatorFilter !== 'all' && (p.createdByEmail || '') !== creatorFilter) return false;
+    if (selectedProducts.size > 0 && !selectedProducts.has(p.productName || '')) return false;
+    if (!withinDateRange(p.orderDate, from, to)) return false;
     return true;
   });
 
@@ -1373,6 +1488,116 @@ async function importPreOrders() {
   }
 }
 
+// ---- Message templates (extension's "Kabar Pra-Pesanan" quick replies) ----
+
+let allTemplates = [];
+let editingTemplateId = null;
+
+function renderTemplatesTable() {
+  const tbody = el('templatesTableBody');
+  tbody.innerHTML = '';
+  el('templatesEmptyState').classList.toggle('hidden', allTemplates.length > 0);
+
+  allTemplates.forEach((t) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escapeHtml(t.label)}</td>
+      <td class="template-text-cell">${escapeHtml(t.text)}</td>
+      <td>
+        <button class="edit-product-btn edit-template-btn" data-id="${escapeHtml(t.id)}">Edit</button>
+        <button class="delete-product-btn delete-template-btn" data-id="${escapeHtml(t.id)}">Hapus</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll('.edit-template-btn').forEach((btn) => {
+    btn.addEventListener('click', () => startEditTemplate(btn.dataset.id));
+  });
+  tbody.querySelectorAll('.delete-template-btn').forEach((btn) => {
+    btn.addEventListener('click', () => deleteTemplate(btn.dataset.id));
+  });
+}
+
+async function loadTemplates() {
+  el('templatesLoadingState').classList.remove('hidden');
+  try {
+    const { templates } = await apiGet('/api/message-templates');
+    allTemplates = templates;
+    renderTemplatesTable();
+  } catch (e) {
+    handleApiError(e, 'Gagal memuat daftar template.');
+  } finally {
+    el('templatesLoadingState').classList.add('hidden');
+  }
+}
+
+function resetTemplateForm() {
+  el('templateLabel').value = '';
+  el('templateText').value = '';
+  editingTemplateId = null;
+  el('templateFormTitle').textContent = 'Tambah Template Baru';
+  el('templateSaveBtn').textContent = 'Tambah';
+  el('templateFormMsg').textContent = '';
+}
+
+function openTemplateAddModal() {
+  resetTemplateForm();
+  el('templateFormModal').classList.remove('hidden');
+}
+
+function closeTemplateFormModal() {
+  el('templateFormModal').classList.add('hidden');
+  resetTemplateForm();
+}
+
+function startEditTemplate(id) {
+  const template = allTemplates.find((t) => t.id === id);
+  if (!template) return;
+  el('templateLabel').value = template.label;
+  el('templateText').value = template.text;
+  editingTemplateId = id;
+  el('templateFormTitle').textContent = 'Edit Template';
+  el('templateSaveBtn').textContent = 'Simpan Perubahan';
+  el('templateFormMsg').textContent = '';
+  el('templateFormModal').classList.remove('hidden');
+}
+
+async function saveTemplate() {
+  const label = el('templateLabel').value.trim();
+  const text = el('templateText').value.trim();
+  if (!label || !text) {
+    el('templateFormMsg').textContent = 'Isi nama template dan isi pesannya dulu.';
+    return;
+  }
+  try {
+    if (editingTemplateId) {
+      await apiPut(`/api/message-templates/${editingTemplateId}`, { label, text });
+    } else {
+      await apiPost('/api/message-templates', { label, text });
+    }
+    closeTemplateFormModal();
+    await loadTemplates();
+  } catch (e) {
+    if (e.message === 'unauthorized') {
+      handleApiError(e);
+      return;
+    }
+    el('templateFormMsg').textContent = e.message || 'Gagal menyimpan template.';
+  }
+}
+
+async function deleteTemplate(id) {
+  if (!confirm('Hapus template ini? Tindakan ini tidak bisa dibatalkan.')) return;
+  try {
+    await apiDelete(`/api/message-templates/${id}`);
+    if (editingTemplateId === id) resetTemplateForm();
+    await loadTemplates();
+  } catch (e) {
+    handleApiError(e, 'Gagal menghapus template.');
+  }
+}
+
 // ---- User management (admin only) ----
 
 function renderUsersTable(users) {
@@ -1446,11 +1671,13 @@ function switchPage(page) {
   el('produkPage').classList.toggle('hidden', page !== 'produk');
   el('pesananPage').classList.toggle('hidden', page !== 'pesanan');
   el('praPesananPage').classList.toggle('hidden', page !== 'praPesanan');
+  el('templatesPage').classList.toggle('hidden', page !== 'templates');
   el('usersPage').classList.toggle('hidden', page !== 'users');
   if (page === 'dashboard') renderDashboard();
   if (page === 'produk') loadProducts();
   if (page === 'pesanan') loadOrders();
   if (page === 'praPesanan') loadPreOrders();
+  if (page === 'templates') loadTemplates();
   if (page === 'users') loadUsers();
 }
 
@@ -1547,6 +1774,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     ['preOrderFormModal', closePreOrderFormModal],
     ['preOrderImportModal', closePreOrderImportModal],
     ['preOrderLincahImportModal', closePreOrderLincahImportModal],
+    ['templateFormModal', closeTemplateFormModal],
   ].forEach(([modalId, closeFn]) => {
     const overlay = el(modalId);
     let mouseDownOnBackdrop = false;
@@ -1563,14 +1791,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   el('dashRefreshBtn').addEventListener('click', loadData);
   el('ordersRefreshBtn').addEventListener('click', loadOrders);
 
-  ['orderFilterStatus', 'orderSearchBox'].forEach((id) => {
+  ['orderFilterStatus', 'orderFilterOwner', 'orderFilterFrom', 'orderFilterTo', 'orderSearchBox'].forEach((id) => {
     el(id).addEventListener('input', () => {
       ordersPage = 1;
       renderOrdersTable();
     });
   });
+  wireMultiselect('orderProduct', ORDER_PRODUCT_MULTISELECT, () => {
+    ordersPage = 1;
+    renderOrdersTable();
+  });
   el('preOrdersRefreshBtn').addEventListener('click', loadPreOrders);
-  el('preOrderFilterCreator').addEventListener('input', () => {
+  ['preOrderFilterCreator', 'preOrderFilterFrom', 'preOrderFilterTo'].forEach((id) => {
+    el(id).addEventListener('input', () => {
+      preOrdersPage = 1;
+      renderPreOrdersTable();
+    });
+  });
+  wireMultiselect('preOrderProduct', PREORDER_PRODUCT_MULTISELECT, () => {
     preOrdersPage = 1;
     renderPreOrdersTable();
   });
@@ -1637,6 +1875,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     preOrdersPage = 1;
     renderPreOrdersTable();
   });
+
+  el('templateAddOpenBtn').addEventListener('click', openTemplateAddModal);
+  el('templateFormCloseBtn').addEventListener('click', closeTemplateFormModal);
+  el('templateCancelEditBtn').addEventListener('click', closeTemplateFormModal);
+  el('templateSaveBtn').addEventListener('click', saveTemplate);
 
   ['dashFilterFrom', 'dashFilterTo', 'dashFilterOwner', 'dashFilterCreator'].forEach((id) => {
     el(id).addEventListener('input', renderDashboard);

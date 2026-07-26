@@ -513,6 +513,12 @@ th, td {
 th { background: #fafbfc; color: var(--ink-soft); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.02em; }
 tbody tr:hover { background: #fafcfb; }
 
+.template-text-cell {
+  max-width: 420px;
+  white-space: pre-wrap;
+  color: var(--ink-soft);
+}
+
 .status-pill {
   display: inline-block;
   padding: 3px 10px;
@@ -656,7 +662,7 @@ tbody tr:hover { background: #fafcfb; }
   font-weight: 600;
   color: var(--ink-soft);
 }
-.form-field input, .form-field select {
+.form-field input, .form-field select, .form-field textarea {
   padding: 8px 10px;
   border: 1px solid #d1d7db;
   border-radius: 6px;
@@ -666,6 +672,7 @@ tbody tr:hover { background: #fafcfb; }
   color: var(--ink);
   background: white;
 }
+.form-field textarea { resize: vertical; }
 .form-field input[readonly] {
   background: var(--bg);
   color: var(--ink-soft);

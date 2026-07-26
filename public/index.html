@@ -40,6 +40,9 @@
         <button class="nav-link" data-page="praPesanan">
           <span class="nav-icon">▥</span> Pra-Pesanan
         </button>
+        <button class="nav-link" data-page="templates">
+          <span class="nav-icon">✎</span> Template Pesan
+        </button>
         <button class="nav-link hidden" id="usersNavBtn" data-page="users">
           <span class="nav-icon">⚙</span> Pengaturan User
         </button>
@@ -301,10 +304,27 @@
         </section>
 
         <section class="filters">
+          <label>Dari
+            <input type="date" id="orderFilterFrom" />
+          </label>
+          <label>Sampai
+            <input type="date" id="orderFilterTo" />
+          </label>
           <label>Filter Status
             <select id="orderFilterStatus">
               <option value="all">Semua Status</option>
             </select>
+          </label>
+          <label>Akun WA
+            <select id="orderFilterOwner">
+              <option value="all">Semua akun</option>
+            </select>
+          </label>
+          <label>Produk
+            <div class="multiselect" id="orderFilterProductMulti">
+              <button type="button" class="multiselect-toggle" id="orderFilterProductToggle">Semua produk</button>
+              <div class="multiselect-panel hidden" id="orderFilterProductPanel"></div>
+            </div>
           </label>
           <input type="search" id="orderSearchBox" placeholder="Cari nama / no. HP / no. resi..." />
         </section>
@@ -512,10 +532,22 @@
         </div>
 
         <section class="filters">
+          <label>Dari
+            <input type="date" id="preOrderFilterFrom" />
+          </label>
+          <label>Sampai
+            <input type="date" id="preOrderFilterTo" />
+          </label>
           <label>Filter CS
             <select id="preOrderFilterCreator">
               <option value="all">Semua CS</option>
             </select>
+          </label>
+          <label>Produk
+            <div class="multiselect" id="preOrderFilterProductMulti">
+              <button type="button" class="multiselect-toggle" id="preOrderFilterProductToggle">Semua produk</button>
+              <div class="multiselect-panel hidden" id="preOrderFilterProductPanel"></div>
+            </div>
           </label>
         </section>
 
@@ -711,6 +743,65 @@
               <button id="preOrderLincahImportBtn">Impor</button>
             </div>
             <p id="preOrderLincahImportMsg" class="hint"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= TEMPLATE PESAN PAGE ================= -->
+      <section id="templatesPage" class="page hidden">
+        <header class="page-header">
+          <h1>Template Pesan</h1>
+          <button id="templateAddOpenBtn" class="btn-primary">+ Tambah Template</button>
+        </header>
+
+        <p class="hint">
+          Template ini muncul sebagai pilihan di badge chat WhatsApp (lewat
+          extension) yang punya Pra-Pesanan aktif, buat ngasih kabar ke
+          pelanggan kalau pesanannya sedang diproses. Pakai <code>{{nama}}</code>
+          di isi pesan - otomatis diganti nama kontak WhatsApp saat template
+          dipilih di extension. Memilih template di extension langsung
+          mengisi kolom chat WhatsApp, belum mengirim apa-apa.
+        </p>
+
+        <section class="table-wrap">
+          <table id="templatesTable">
+            <thead>
+              <tr>
+                <th>Nama Template</th>
+                <th>Isi Pesan</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="templatesTableBody"></tbody>
+          </table>
+          <div id="templatesEmptyState" class="notice hidden">Belum ada template.</div>
+          <div id="templatesLoadingState" class="notice hidden">Memuat data dari MongoDB...</div>
+        </section>
+
+        <!-- Modal: Tambah/Edit Template -->
+        <div id="templateFormModal" class="modal-overlay hidden">
+          <div class="modal-box">
+            <div class="modal-header">
+              <h2 id="templateFormTitle">Tambah Template Baru</h2>
+              <button class="modal-close-btn" id="templateFormCloseBtn">&times;</button>
+            </div>
+            <div class="form-section">
+              <div class="form-grid">
+                <label class="form-field form-field-wide">
+                  <span>Nama Template</span>
+                  <input type="text" id="templateLabel" placeholder="misal: Konfirmasi Diproses" />
+                </label>
+                <label class="form-field form-field-wide">
+                  <span>Isi Pesan</span>
+                  <textarea id="templateText" rows="5" placeholder="Isi pesan... gunakan {{nama}} untuk nama pelanggan"></textarea>
+                </label>
+              </div>
+            </div>
+            <p id="templateFormMsg" class="error-msg"></p>
+            <div class="modal-actions">
+              <button id="templateSaveBtn" class="btn-primary">Tambah</button>
+              <button id="templateCancelEditBtn" class="btn-outline">Batal</button>
+            </div>
           </div>
         </div>
       </section>

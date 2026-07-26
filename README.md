@@ -29,6 +29,7 @@ Without the header (or with a wrong key) this should return `401`.
 - `GET /api/settings` - `{ settings: {...} }`
 - `PUT /api/settings` - upsert, body is the settings object directly
 - `GET /api/products`, `POST /api/products`, `PUT /api/products/:id`, `DELETE /api/products/:id` - product catalog CRUD
+- `GET /api/message-templates`, `POST /api/message-templates`, `PUT /api/message-templates/:id`, `DELETE /api/message-templates/:id` - quick-reply template CRUD (`{label, text}`), managed on the "Template Pesan" dashboard page, mirrored read-only into the extension's per-chat "Kabar Pra-Pesanan" badge (see `wa-ektension/background.js` `pullMessageTemplates`)
 - `GET /api/orders` - all imported orders, `{ orders: [...] }`
 - `PUT /api/orders/:id` - edit one order (same Product-catalog-matching side effect as import if `productName` changes)
 - `DELETE /api/orders/:id` - delete one order
@@ -224,6 +225,15 @@ when a user explicitly toggles closing (never by routine scanning), so the
 extension can compare that one field's timestamp across local/remote and
 take whichever side changed it more recently, independent of every other
 field on the chat.
+
+`Chat.product`/`productUpdatedAt` and `Chat.preOrderNotified`/
+`preOrderNotifiedOrderNumber`/`preOrderNotifiedUpdatedAt` follow the exact
+same per-field-timestamp pattern (see the extension's `background.js`
+`PER_FIELD_MERGE_KEYS`) - the latter two mark, from the extension's per-chat
+badge, whether a contact with an active Pra-Pesanan has been told their order
+is being processed, tied to that specific Pra-Pesanan's `orderNumber` so a
+later, unrelated Pra-Pesanan for the same contact doesn't inherit a stale
+"already notified" mark.
 
 ## Structure
 

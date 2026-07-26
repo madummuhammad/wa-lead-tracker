@@ -26,6 +26,16 @@ const chatSchema = new mongoose.Schema(
     // one device's local copy always winning.
     product: String,
     productUpdatedAt: String,
+    // Whether this contact has been told (by hand, in WhatsApp) that their
+    // active Pra-Pesanan is being processed - set from the extension's
+    // per-chat badge, same per-chat-not-settings/paired-timestamp reasoning
+    // as manualClosing above. preOrderNotifiedOrderNumber records *which*
+    // Pra-Pesanan (by its own orderNumber) the flag refers to, so a later,
+    // different Pra-Pesanan for the same contact doesn't inherit a stale
+    // "already notified" from a previous, unrelated order.
+    preOrderNotified: Boolean,
+    preOrderNotifiedOrderNumber: String,
+    preOrderNotifiedUpdatedAt: String,
     firstMessageDate: String,
     firstSeenAt: String,
     labels: { type: [String], default: [] },
