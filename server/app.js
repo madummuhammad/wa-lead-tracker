@@ -1137,6 +1137,28 @@ function createApp() {
     }
   });
 
+  // ---- Tracked phones (presence check for the extension's chat-list badge) ----
+  // Just the distinct phones that have ANY Order or PreOrder record at all,
+  // regardless of status/converted - unlike the filtered read-only mirrors
+  // above (active Pra-Pesanan, orders awaiting a resi notify), which are
+  // scoped to "something actionable right now". This is specifically "has
+  // this contact ever been entered into Pesanan/Pra-Pesanan", so a Closing
+  // chat with neither can be flagged "Belum Di Input" instead of being
+  // lumped in with "Belum Dikabari" (which implies it *is* tracked, just not
+  // notified yet).
+  app.get('/api/tracked-phones', requireAuth, async (req, res) => {
+    try {
+      const [orderPhones, preOrderPhones] = await Promise.all([
+        Order.distinct('customerPhone'),
+        PreOrder.distinct('customerPhone'),
+      ]);
+      const phones = Array.from(new Set([...orderPhones, ...preOrderPhones].filter(Boolean)));
+      res.json({ phones });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   app.get('/api/settings', requireAuth, async (req, res) => {
     try {
       const doc = await Settings.findById('singleton').lean();
