@@ -526,9 +526,24 @@ function createApp() {
     }
   });
 
+  // Deleting an Order without also clearing any PreOrder.convertedOrderId
+  // pointing to it leaves that pre-order permanently stuck: findPreOrderMatch
+  // only searches PreOrders with no convertedOrderId, so a "converted" one
+  // whose Order got deleted can never be matched (or re-import its Order)
+  // again - it just silently disappears from the active Pra-Pesanan list
+  // with nothing pointing back at it. Clearing convertedOrderId/convertedAt
+  // here un-converts it, so it's active again and importable like any other.
+  async function revertPreOrdersConvertedInto(orderIds) {
+    await PreOrder.updateMany(
+      { convertedOrderId: { $in: orderIds } },
+      { $unset: { convertedOrderId: '', convertedAt: '' } }
+    );
+  }
+
   app.delete('/api/orders/:id', requireAuth, async (req, res) => {
     try {
       await Order.findByIdAndDelete(req.params.id);
+      await revertPreOrdersConvertedInto([req.params.id]);
       res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: String(e) });
@@ -542,6 +557,7 @@ function createApp() {
         return res.status(400).json({ error: 'body must be { ids: [...] }' });
       }
       const result = await Order.deleteMany({ _id: { $in: ids } });
+      await revertPreOrdersConvertedInto(ids);
       res.json({ ok: true, deletedCount: result.deletedCount });
     } catch (e) {
       res.status(500).json({ error: String(e) });
