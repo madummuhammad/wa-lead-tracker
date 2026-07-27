@@ -751,7 +751,13 @@ function createApp() {
           preOrderConversionOps.push({
             updateOne: {
               filter: { _id: matchedPreOrder._id },
-              update: { $set: { convertedOrderId: noOrder, convertedAt: new Date() } },
+              // A match here means this row - from the actual lincah.id order
+              // export - is the real order this pre-order graduated into, so
+              // LINCAH gets ticked automatically same as it would from the
+              // "Data Order" sheet's own LINCAH column (see
+              // POST /api/preorders/import) - the admin shouldn't have to
+              // re-tick it by hand for every row this import already confirms.
+              update: { $set: { convertedOrderId: noOrder, convertedAt: new Date(), lincah: true } },
             },
           });
         }
