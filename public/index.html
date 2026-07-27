@@ -210,6 +210,10 @@
         <section class="bulk-actions">
           <span id="selectedCount"></span>
           <button id="deleteSelectedBtn" class="danger" disabled>Hapus yang Dipilih</button>
+          <div class="multiselect column-toggle" id="kontakColumnMulti">
+            <button type="button" class="multiselect-toggle" id="kontakColumnToggle">Kolom</button>
+            <div class="multiselect-panel hidden" id="kontakColumnPanel"></div>
+          </div>
         </section>
 
         <section class="table-wrap">
@@ -217,11 +221,11 @@
             <thead>
               <tr>
                 <th><input type="checkbox" id="selectAllCheckbox" title="Pilih semua" /></th>
-                <th>Nama</th>
-                <th>Nomor</th>
-                <th>Akun WA</th>
-                <th>Tanggal Lead</th>
-                <th>Status</th>
+                <th data-col="nama">Nama</th>
+                <th data-col="nomor">Nomor</th>
+                <th data-col="akunWa">Akun WA</th>
+                <th data-col="tanggalLead">Tanggal Lead</th>
+                <th data-col="status">Status</th>
                 <th></th>
               </tr>
             </thead>
@@ -259,17 +263,24 @@
           <p id="productFormMsg" class="error-msg"></p>
         </section>
 
+        <section class="bulk-actions">
+          <div class="multiselect column-toggle" id="produkColumnMulti">
+            <button type="button" class="multiselect-toggle" id="produkColumnToggle">Kolom</button>
+            <div class="multiselect-panel hidden" id="produkColumnPanel"></div>
+          </div>
+        </section>
+
         <section class="table-wrap scroll-x">
           <table id="productsTable">
             <thead>
               <tr>
-                <th>Nama Produk</th>
-                <th>Harga Jual</th>
-                <th>Berat (gram)</th>
-                <th>Volume (cm³)</th>
-                <th>Panjang (cm)</th>
-                <th>Lebar (cm)</th>
-                <th>Tinggi (cm)</th>
+                <th data-col="nama">Nama Produk</th>
+                <th data-col="harga">Harga Jual</th>
+                <th data-col="berat">Berat (gram)</th>
+                <th data-col="volume">Volume (cm³)</th>
+                <th data-col="panjang">Panjang (cm)</th>
+                <th data-col="lebar">Lebar (cm)</th>
+                <th data-col="tinggi">Tinggi (cm)</th>
                 <th></th>
               </tr>
             </thead>
@@ -332,6 +343,10 @@
         <section class="bulk-actions">
           <span id="ordersSelectedCount"></span>
           <button id="ordersDeleteSelectedBtn" class="danger" disabled>Hapus yang Dipilih</button>
+          <div class="multiselect column-toggle" id="ordersColumnMulti">
+            <button type="button" class="multiselect-toggle" id="ordersColumnToggle">Kolom</button>
+            <div class="multiselect-panel hidden" id="ordersColumnPanel"></div>
+          </div>
         </section>
 
         <section class="table-wrap scroll-x">
@@ -339,16 +354,16 @@
             <thead>
               <tr>
                 <th><input type="checkbox" id="ordersSelectAllCheckbox" title="Pilih semua" /></th>
-                <th>No. Order</th>
-                <th>Tanggal</th>
-                <th>Penerima</th>
-                <th>No. HP</th>
-                <th>Produk</th>
-                <th>Jumlah</th>
-                <th>Harga</th>
-                <th>Akun WA</th>
-                <th>Status</th>
-                <th>Resi</th>
+                <th data-col="noOrder">No. Order</th>
+                <th data-col="tanggal">Tanggal</th>
+                <th data-col="penerima">Penerima</th>
+                <th data-col="noHp">No. HP</th>
+                <th data-col="produk">Produk</th>
+                <th data-col="jumlah">Jumlah</th>
+                <th data-col="harga">Harga</th>
+                <th data-col="akunWa">Akun WA</th>
+                <th data-col="status">Status</th>
+                <th data-col="resi">Resi</th>
                 <th></th>
               </tr>
             </thead>
@@ -554,6 +569,10 @@
         <section class="bulk-actions">
           <span id="preOrdersSelectedCount"></span>
           <button id="preOrdersDeleteSelectedBtn" class="danger" disabled>Hapus yang Dipilih</button>
+          <div class="multiselect column-toggle" id="preOrdersColumnMulti">
+            <button type="button" class="multiselect-toggle" id="preOrdersColumnToggle">Kolom</button>
+            <div class="multiselect-panel hidden" id="preOrdersColumnPanel"></div>
+          </div>
         </section>
 
         <section class="table-wrap scroll-x">
@@ -561,27 +580,27 @@
             <thead>
               <tr>
                 <th><input type="checkbox" id="preOrdersSelectAllCheckbox" title="Pilih semua" /></th>
-                <th>No. Order</th>
-                <th>No. Order Pesanan</th>
-                <th>Tanggal Order</th>
-                <th>Nama Customer</th>
-                <th>No HP</th>
-                <th>Alamat Lengkap</th>
-                <th>Produk</th>
-                <th>Qty</th>
-                <th>Harga Satuan</th>
-                <th>Total Harga</th>
-                <th>Ongkir</th>
-                <th>Total Tagihan</th>
-                <th>Metode Bayar</th>
-                <th>No Resi</th>
-                <th>Status Order</th>
-                <th>Sumber Campaign</th>
-                <th>Catatan</th>
-                <th>LINCAH</th>
-                <th>ANEKA</th>
-                <th>Status Kabar</th>
-                <th>Dibuat Oleh</th>
+                <th data-col="noOrder">No. Order</th>
+                <th data-col="noOrderPesanan">No. Order Pesanan</th>
+                <th data-col="tanggalOrder">Tanggal Order</th>
+                <th data-col="statusKabar">Status Kabar</th>
+                <th data-col="namaCustomer">Nama Customer</th>
+                <th data-col="noHp">No HP</th>
+                <th data-col="alamat">Alamat Lengkap</th>
+                <th data-col="produk">Produk</th>
+                <th data-col="qty">Qty</th>
+                <th data-col="hargaSatuan">Harga Satuan</th>
+                <th data-col="totalHarga">Total Harga</th>
+                <th data-col="ongkir">Ongkir</th>
+                <th data-col="totalTagihan">Total Tagihan</th>
+                <th data-col="metodeBayar">Metode Bayar</th>
+                <th data-col="noResi">No Resi</th>
+                <th data-col="statusOrder">Status Order</th>
+                <th data-col="sumberCampaign">Sumber Campaign</th>
+                <th data-col="catatan">Catatan</th>
+                <th data-col="lincah">LINCAH</th>
+                <th data-col="aneka">ANEKA</th>
+                <th data-col="dibuatOleh">Dibuat Oleh</th>
                 <th></th>
               </tr>
             </thead>

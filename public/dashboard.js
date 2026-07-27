@@ -206,6 +206,77 @@ function wireMultiselect(name, ids, onChange) {
   });
 }
 
+// ---- Column show/hide toggle ("Kolom" button) - generic for any table whose
+// <th>/<td> pairs share a matching data-col attribute (see index.html). Which
+// columns are hidden is persisted in localStorage per table, so the choice
+// survives a reload; visibility itself is applied via one injected <style>
+// per table rather than touching each cell directly, since table bodies here
+// get fully re-rendered on every filter/page change and a DOM-attribute
+// approach would have to be re-applied after every one of those re-renders.
+const COLUMN_VISIBILITY_STORAGE = 'waLeadHiddenColumns';
+
+function loadHiddenColumnsStore() {
+  try {
+    return JSON.parse(localStorage.getItem(COLUMN_VISIBILITY_STORAGE) || '{}');
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveHiddenColumnsStore(store) {
+  localStorage.setItem(COLUMN_VISIBILITY_STORAGE, JSON.stringify(store));
+}
+
+function setupColumnVisibility({ tableId, multiId, toggleId, panelId }) {
+  const table = el(tableId);
+  const headerCells = Array.from(table.querySelectorAll('thead th[data-col]'));
+  if (headerCells.length === 0) return;
+
+  const columns = headerCells.map((th) => ({ key: th.dataset.col, label: th.textContent.trim() }));
+  const store = loadHiddenColumnsStore();
+  const hidden = new Set(store[tableId] || []);
+
+  const styleEl = document.createElement('style');
+  document.head.appendChild(styleEl);
+
+  const applyStyle = () => {
+    styleEl.textContent = Array.from(hidden)
+      .map((key) => `#${tableId} [data-col="${key}"] { display: none; }`)
+      .join('\n');
+  };
+  const updateToggleLabel = () => {
+    el(toggleId).textContent = hidden.size === 0 ? 'Kolom' : `Kolom (${hidden.size} disembunyikan)`;
+  };
+  const renderPanel = () => {
+    el(panelId).innerHTML = columns.map((c) => `
+      <label class="multiselect-option">
+        <input type="checkbox" class="column-toggle-item" value="${escapeHtml(c.key)}" ${hidden.has(c.key) ? '' : 'checked'} />
+        ${escapeHtml(c.label)}
+      </label>`).join('');
+  };
+
+  renderPanel();
+  applyStyle();
+  updateToggleLabel();
+
+  el(toggleId).addEventListener('click', (e) => {
+    e.stopPropagation();
+    el(panelId).classList.toggle('hidden');
+  });
+  el(panelId).addEventListener('change', (e) => {
+    if (!e.target.classList.contains('column-toggle-item')) return;
+    if (e.target.checked) hidden.delete(e.target.value);
+    else hidden.add(e.target.value);
+    store[tableId] = Array.from(hidden);
+    saveHiddenColumnsStore(store);
+    applyStyle();
+    updateToggleLabel();
+  });
+  document.addEventListener('click', (e) => {
+    if (!el(multiId).contains(e.target)) el(panelId).classList.add('hidden');
+  });
+}
+
 function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -413,14 +484,14 @@ function renderKontak() {
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td><input type="checkbox" class="row-checkbox" data-id="${escapeHtml(chat.id)}" ${selectedIds.has(chat.id) ? 'checked' : ''} /></td>
-        <td>${escapeHtml(chat.name || '-')}</td>
-        <td>${escapeHtml(chat.phone || '-')}</td>
-        <td>${escapeHtml(chat.ownerNumber || '-')}</td>
-        <td>
+        <td data-col="nama">${escapeHtml(chat.name || '-')}</td>
+        <td data-col="nomor">${escapeHtml(chat.phone || '-')}</td>
+        <td data-col="akunWa">${escapeHtml(chat.ownerNumber || '-')}</td>
+        <td data-col="tanggalLead">
           ${escapeHtml(display)}
           <button class="edit-btn" data-id="${escapeHtml(chat.id)}" title="Isi tanggal lead manual">✎</button>
         </td>
-        <td>${closing ? '<span class="status-pill">Closing</span>' : ''}</td>
+        <td data-col="status">${closing ? '<span class="status-pill">Closing</span>' : ''}</td>
         <td>
           <button class="closing-toggle ${closing ? 'active' : ''}" data-id="${escapeHtml(chat.id)}">
             ${closing ? '✓ Closing' : 'Tandai Closing'}
@@ -540,6 +611,9 @@ async function loadData() {
 // weight in gram, volume in cm3, length/width/height in cm - all optional,
 // unlike name/price which every product needs.
 const PRODUCT_DIM_FIELDS = ['weight', 'volume', 'length', 'width', 'height'];
+// Maps each field to the data-col key its <th> carries in index.html, for
+// the Kolom show/hide toggle (see setupColumnVisibility below).
+const PRODUCT_DIM_COL = { weight: 'berat', volume: 'volume', length: 'panjang', width: 'lebar', height: 'tinggi' };
 
 function formatRupiah(price) {
   return `Rp ${Number(price || 0).toLocaleString('id-ID')}`;
@@ -561,11 +635,11 @@ function renderProductsTable() {
       const tr = document.createElement('tr');
       if (editingProductId === product.id) {
         const dimInputs = PRODUCT_DIM_FIELDS
-          .map((field) => `<td><input type="number" class="edit-product-${field}" min="0" value="${escapeHtml(product[field] ?? '')}" /></td>`)
+          .map((field) => `<td data-col="${PRODUCT_DIM_COL[field]}"><input type="number" class="edit-product-${field}" min="0" value="${escapeHtml(product[field] ?? '')}" /></td>`)
           .join('');
         tr.innerHTML = `
-          <td><input type="text" class="edit-product-name" value="${escapeHtml(product.name)}" /></td>
-          <td><input type="number" class="edit-product-price" min="0" value="${escapeHtml(product.price)}" /></td>
+          <td data-col="nama"><input type="text" class="edit-product-name" value="${escapeHtml(product.name)}" /></td>
+          <td data-col="harga"><input type="number" class="edit-product-price" min="0" value="${escapeHtml(product.price)}" /></td>
           ${dimInputs}
           <td>
             <button class="save-product-btn" data-id="${escapeHtml(product.id)}">Simpan</button>
@@ -573,10 +647,12 @@ function renderProductsTable() {
           </td>
         `;
       } else {
-        const dimCells = PRODUCT_DIM_FIELDS.map((field) => `<td>${escapeHtml(formatDim(product[field]))}</td>`).join('');
+        const dimCells = PRODUCT_DIM_FIELDS
+          .map((field) => `<td data-col="${PRODUCT_DIM_COL[field]}">${escapeHtml(formatDim(product[field]))}</td>`)
+          .join('');
         tr.innerHTML = `
-          <td>${escapeHtml(product.name)}</td>
-          <td>${escapeHtml(formatRupiah(product.price))}</td>
+          <td data-col="nama">${escapeHtml(product.name)}</td>
+          <td data-col="harga">${escapeHtml(formatRupiah(product.price))}</td>
           ${dimCells}
           <td>
             <button class="edit-product-btn" data-id="${escapeHtml(product.id)}">Edit</button>
@@ -762,16 +838,16 @@ function renderOrdersTable() {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><input type="checkbox" class="order-row-checkbox" data-id="${escapeHtml(order.id)}" ${selectedOrderIds.has(order.id) ? 'checked' : ''} /></td>
-      <td>${escapeHtml(order.id)}</td>
-      <td>${escapeHtml(dateDisplay)}</td>
-      <td>${escapeHtml(order.customerName || '-')}</td>
-      <td>${escapeHtml(order.customerPhone || '-')}</td>
-      <td>${escapeHtml(order.productName || '-')}</td>
-      <td>${escapeHtml(order.qty ?? '-')}</td>
-      <td>${escapeHtml(formatRupiah(order.price))}</td>
-      <td>${escapeHtml(order.ownerNumber || '-')}</td>
-      <td>${escapeHtml(order.status || '-')}</td>
-      <td>${escapeHtml(order.trackingNumber || '-')}</td>
+      <td data-col="noOrder">${escapeHtml(order.id)}</td>
+      <td data-col="tanggal">${escapeHtml(dateDisplay)}</td>
+      <td data-col="penerima">${escapeHtml(order.customerName || '-')}</td>
+      <td data-col="noHp">${escapeHtml(order.customerPhone || '-')}</td>
+      <td data-col="produk">${escapeHtml(order.productName || '-')}</td>
+      <td data-col="jumlah">${escapeHtml(order.qty ?? '-')}</td>
+      <td data-col="harga">${escapeHtml(formatRupiah(order.price))}</td>
+      <td data-col="akunWa">${escapeHtml(order.ownerNumber || '-')}</td>
+      <td data-col="status">${escapeHtml(order.status || '-')}</td>
+      <td data-col="resi">${escapeHtml(order.trackingNumber || '-')}</td>
       <td>
         <button class="edit-product-btn edit-order-btn" data-id="${escapeHtml(order.id)}">Edit</button>
         <button class="delete-product-btn delete-order-btn" data-id="${escapeHtml(order.id)}">Hapus</button>
@@ -1395,27 +1471,27 @@ function renderPreOrdersTable() {
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><input type="checkbox" class="preorder-row-checkbox" data-id="${escapeHtml(preOrder.id)}" ${selectedPreOrderIds.has(preOrder.id) ? 'checked' : ''} /></td>
-      <td>${escapeHtml(preOrder.orderNumber || '-')}</td>
-      <td>${escapeHtml(preOrder.convertedOrderId || '-')}</td>
-      <td>${escapeHtml(dateDisplay)}</td>
-      <td>${escapeHtml(preOrder.customerName || '-')}</td>
-      <td>${escapeHtml(preOrder.customerPhone || '-')}</td>
-      <td>${escapeHtml(preOrder.address || '-')}</td>
-      <td>${escapeHtml(preOrder.productName || '-')}</td>
-      <td>${escapeHtml(preOrder.qty ?? '-')}</td>
-      <td>${escapeHtml(formatRupiah(preOrder.unitPrice))}</td>
-      <td>${escapeHtml(formatRupiah(preOrder.totalPrice))}</td>
-      <td>${escapeHtml(formatRupiah(preOrder.shippingCost))}</td>
-      <td>${escapeHtml(formatRupiah(preOrder.totalBill))}</td>
-      <td>${escapeHtml(preOrder.paymentMethod || '-')}</td>
-      <td>${escapeHtml(preOrder.noResi || '-')}</td>
-      <td>${escapeHtml(preOrder.statusOrder || '-')}</td>
-      <td>${escapeHtml(preOrder.campaignSource || '-')}</td>
-      <td>${escapeHtml(preOrder.note || '-')}</td>
-      <td>${preOrder.lincah ? '✓' : '-'}</td>
-      <td>${preOrder.aneka ? '✓' : '-'}</td>
-      <td><span class="notify-pill notify-pill--${notifyStatus.state}">${escapeHtml(notifyStatus.text)}</span></td>
-      <td>${escapeHtml(preOrder.createdByEmail || '-')}</td>
+      <td data-col="noOrder">${escapeHtml(preOrder.orderNumber || '-')}</td>
+      <td data-col="noOrderPesanan">${escapeHtml(preOrder.convertedOrderId || '-')}</td>
+      <td data-col="tanggalOrder">${escapeHtml(dateDisplay)}</td>
+      <td data-col="statusKabar"><span class="notify-pill notify-pill--${notifyStatus.state}">${escapeHtml(notifyStatus.text)}</span></td>
+      <td data-col="namaCustomer">${escapeHtml(preOrder.customerName || '-')}</td>
+      <td data-col="noHp">${escapeHtml(preOrder.customerPhone || '-')}</td>
+      <td data-col="alamat">${escapeHtml(preOrder.address || '-')}</td>
+      <td data-col="produk">${escapeHtml(preOrder.productName || '-')}</td>
+      <td data-col="qty">${escapeHtml(preOrder.qty ?? '-')}</td>
+      <td data-col="hargaSatuan">${escapeHtml(formatRupiah(preOrder.unitPrice))}</td>
+      <td data-col="totalHarga">${escapeHtml(formatRupiah(preOrder.totalPrice))}</td>
+      <td data-col="ongkir">${escapeHtml(formatRupiah(preOrder.shippingCost))}</td>
+      <td data-col="totalTagihan">${escapeHtml(formatRupiah(preOrder.totalBill))}</td>
+      <td data-col="metodeBayar">${escapeHtml(preOrder.paymentMethod || '-')}</td>
+      <td data-col="noResi">${escapeHtml(preOrder.noResi || '-')}</td>
+      <td data-col="statusOrder">${escapeHtml(preOrder.statusOrder || '-')}</td>
+      <td data-col="sumberCampaign">${escapeHtml(preOrder.campaignSource || '-')}</td>
+      <td data-col="catatan">${escapeHtml(preOrder.note || '-')}</td>
+      <td data-col="lincah">${preOrder.lincah ? '✓' : '-'}</td>
+      <td data-col="aneka">${preOrder.aneka ? '✓' : '-'}</td>
+      <td data-col="dibuatOleh">${escapeHtml(preOrder.createdByEmail || '-')}</td>
       <td>
         <button class="edit-product-btn edit-preorder-btn" data-id="${escapeHtml(preOrder.id)}">Edit</button>
         <button class="delete-product-btn delete-preorder-btn" data-id="${escapeHtml(preOrder.id)}">Hapus</button>
@@ -1976,6 +2052,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   el('deleteSelectedBtn').addEventListener('click', deleteSelected);
 
   syncFilterVisibility(KONTAK_IDS, { single: 'filterSingleWrap', range: 'filterRangeWrap' });
+
+  setupColumnVisibility({ tableId: 'chatTable', multiId: 'kontakColumnMulti', toggleId: 'kontakColumnToggle', panelId: 'kontakColumnPanel' });
+  setupColumnVisibility({ tableId: 'productsTable', multiId: 'produkColumnMulti', toggleId: 'produkColumnToggle', panelId: 'produkColumnPanel' });
+  setupColumnVisibility({ tableId: 'ordersTable', multiId: 'ordersColumnMulti', toggleId: 'ordersColumnToggle', panelId: 'ordersColumnPanel' });
+  setupColumnVisibility({ tableId: 'preOrdersTable', multiId: 'preOrdersColumnMulti', toggleId: 'preOrdersColumnToggle', panelId: 'preOrdersColumnPanel' });
 
   const storedToken = localStorage.getItem(TOKEN_STORAGE);
   if (storedToken) {

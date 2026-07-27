@@ -304,6 +304,13 @@ body {
   margin-top: auto;
 }
 
+/* Kolom show/hide toggle - same dropdown widget as the product multiselect
+   below, just pushed to the far right of the bulk-actions row and narrower
+   since "Kolom" is a much shorter label than a product name. */
+.column-toggle { margin-left: auto; }
+.column-toggle .multiselect-toggle { min-width: 90px; }
+.column-toggle .multiselect-panel { right: 0; left: auto; min-width: 220px; }
+
 /* ---------- Multi-select dropdown (e.g. Dashboard Produk filter) ---------- */
 .multiselect { position: relative; }
 .multiselect-toggle {
