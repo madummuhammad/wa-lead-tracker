@@ -463,6 +463,10 @@ body {
   min-height: 28px;
 }
 .bulk-actions #selectedCount { font-size: 12px; color: var(--ink-soft); }
+/* .hint normally has margin-top for stacking under a block element - inside
+   this flex row that just pushes it out of vertical alignment with the
+   buttons next to it. */
+.bulk-actions .hint { margin-top: 0; }
 .bulk-actions .danger {
   border: 1px solid var(--danger);
   background: white;

@@ -995,6 +995,26 @@ function createApp() {
     }
   });
 
+  // LINCAH gets set automatically from the "Data Order" sheet's own LINCAH
+  // column on import (see POST /api/preorders/import above) - ANEKA has no
+  // such source and has always had to be ticked one row at a time in the
+  // edit form. This is a bulk alternative using the same row-selection
+  // checkboxes the table already has for "Hapus yang Dipilih" - a separate,
+  // single-field bulkWrite rather than looping the general PUT /:id per row,
+  // so it can't accidentally touch any other field on the selected rows.
+  app.post('/api/preorders/bulk-aneka', requireAuth, async (req, res) => {
+    try {
+      const { ids, aneka } = req.body || {};
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ error: 'body must be { ids: [...], aneka: boolean }' });
+      }
+      const result = await PreOrder.updateMany({ _id: { $in: ids } }, { $set: { aneka: aneka === true } });
+      res.json({ ok: true, modifiedCount: result.modifiedCount });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   app.post('/api/preorders/import', requireAuth, upload.single('file'), async (req, res) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'file is required (field name "file")' });

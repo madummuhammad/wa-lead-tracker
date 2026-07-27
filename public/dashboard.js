@@ -1636,6 +1636,8 @@ function renderPreOrdersTable() {
 function updatePreOrdersSelectionUi() {
   const count = selectedPreOrderIds.size;
   el('preOrdersDeleteSelectedBtn').disabled = count === 0;
+  el('preOrdersMarkAnekaSelectedBtn').disabled = count === 0;
+  el('preOrdersUnmarkAnekaSelectedBtn').disabled = count === 0;
   el('preOrdersSelectedCount').textContent = count > 0 ? `${count} dipilih` : '';
 
   const checkboxes = document.querySelectorAll('.preorder-row-checkbox');
@@ -1654,6 +1656,44 @@ async function deleteSelectedPreOrders() {
     await loadPreOrders();
   } catch (e) {
     handleApiError(e, 'Gagal menghapus pra-pesanan.');
+  }
+}
+
+// Bulk ANEKA toggle - LINCAH fills in automatically from the "Data Order"
+// sheet's own column on import, but ANEKA has never had a source to fill it
+// from, so it's always had to be ticked one row at a time in the edit form.
+// This reuses the same row-selection checkboxes the table already has for
+// "Hapus yang Dipilih" to set it for many rows in one click instead.
+let preOrdersBulkActionMsgTimer = null;
+
+async function bulkSetPreOrderAneka(aneka) {
+  const ids = Array.from(selectedPreOrderIds);
+  if (ids.length === 0) return;
+
+  const msgEl = el('preOrdersBulkActionMsg');
+  const markBtn = el('preOrdersMarkAnekaSelectedBtn');
+  const unmarkBtn = el('preOrdersUnmarkAnekaSelectedBtn');
+  clearTimeout(preOrdersBulkActionMsgTimer);
+  markBtn.disabled = true;
+  unmarkBtn.disabled = true;
+  msgEl.textContent = aneka ? 'Menandai ANEKA...' : 'Membatalkan ANEKA...';
+
+  try {
+    await apiPost('/api/preorders/bulk-aneka', { ids, aneka });
+    allPreOrders.forEach((p) => {
+      if (selectedPreOrderIds.has(p.id)) p.aneka = aneka;
+    });
+    selectedPreOrderIds.clear(); // done with this batch - same as delete, don't leave rows checked
+    renderPreOrdersTable();
+    msgEl.textContent = aneka
+      ? `✓ ${ids.length} pra-pesanan ditandai ANEKA.`
+      : `✓ ANEKA dibatalkan untuk ${ids.length} pra-pesanan.`;
+    preOrdersBulkActionMsgTimer = setTimeout(() => { msgEl.textContent = ''; }, 3000);
+  } catch (e) {
+    msgEl.textContent = '';
+    markBtn.disabled = false;
+    unmarkBtn.disabled = false;
+    handleApiError(e, 'Gagal menandai ANEKA.');
   }
 }
 
@@ -2085,6 +2125,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     updatePreOrdersSelectionUi();
   });
   el('preOrdersDeleteSelectedBtn').addEventListener('click', deleteSelectedPreOrders);
+  el('preOrdersMarkAnekaSelectedBtn').addEventListener('click', () => bulkSetPreOrderAneka(true));
+  el('preOrdersUnmarkAnekaSelectedBtn').addEventListener('click', () => bulkSetPreOrderAneka(false));
 
   el('preOrdersPrevBtn').addEventListener('click', () => {
     preOrdersPage -= 1;
