@@ -1500,20 +1500,42 @@ async function togglePreOrderResponseStatus(id) {
   }
 }
 
+// Which of our own WA accounts this pre-order's customer came in through -
+// derived read-only from Chat.ownerNumber (set when the extension scans that
+// phone in WhatsApp Web), keyed the same way Status Kabar/Status Respon
+// cross-reference allChats. PreOrder itself has no ownerNumber field of its
+// own - if this phone was never scanned by the extension, there's simply
+// nothing to show it from.
+function preOrderOwnerNumber(preOrder) {
+  const chat = preOrder.customerPhone ? allChats[preOrder.customerPhone] : null;
+  return (chat && chat.ownerNumber) || null;
+}
+
 function renderPreOrdersTable() {
   populatePreOrderCreatorFilterSelect(el('preOrderFilterCreator'));
+  populateOwnerSelect(el('preOrderFilterOwner'));
   const preOrderProductNames = Array.from(new Set(allPreOrders.map((p) => p.productName).filter(Boolean))).sort();
   renderMultiselectPanel('preOrderProduct', PREORDER_PRODUCT_MULTISELECT, preOrderProductNames);
 
   const creatorFilter = el('preOrderFilterCreator').value;
+  const ownerFilter = el('preOrderFilterOwner').value;
   const from = el('preOrderFilterFrom').value;
   const to = el('preOrderFilterTo').value;
   const selectedProducts = getMultiselectSelection('preOrderProduct');
+  const notifyStatusFilter = el('preOrderFilterNotifyStatus').value;
+  const responseStatusFilter = el('preOrderFilterResponseStatus').value;
 
   const filtered = allPreOrders.filter((p) => {
     if (creatorFilter !== 'all' && (p.createdByEmail || '') !== creatorFilter) return false;
+    // Same Chat.ownerNumber lookup the Akun WA column itself displays (see
+    // preOrderOwnerNumber) - a pre-order whose phone was never scanned by
+    // the extension has no owner to match against, so it's excluded by any
+    // specific Akun WA filter (only "Semua akun" shows it).
+    if (ownerFilter !== 'all' && preOrderOwnerNumber(p) !== ownerFilter) return false;
     if (selectedProducts.size > 0 && !selectedProducts.has(p.productName || '')) return false;
     if (!withinDateRange(p.orderDate, from, to)) return false;
+    if (notifyStatusFilter !== 'all' && preOrderNotifyStatus(p).state !== notifyStatusFilter) return false;
+    if (responseStatusFilter !== 'all' && preOrderResponseStatus(p).state !== responseStatusFilter) return false;
     return true;
   });
 
@@ -1564,6 +1586,7 @@ function renderPreOrdersTable() {
       </td>
       <td data-col="namaCustomer">${escapeHtml(preOrder.customerName || '-')}</td>
       <td data-col="noHp">${escapeHtml(preOrder.customerPhone || '-')}</td>
+      <td data-col="akunWa">${escapeHtml(preOrderOwnerNumber(preOrder) || '-')}</td>
       <td data-col="alamat">${escapeHtml(preOrder.address || '-')}</td>
       <td data-col="produk">${escapeHtml(preOrder.productName || '-')}</td>
       <td data-col="qty">${escapeHtml(preOrder.qty ?? '-')}</td>
@@ -2003,7 +2026,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderOrdersTable();
   });
   el('preOrdersRefreshBtn').addEventListener('click', loadPreOrders);
-  ['preOrderFilterCreator', 'preOrderFilterFrom', 'preOrderFilterTo'].forEach((id) => {
+  ['preOrderFilterCreator', 'preOrderFilterOwner', 'preOrderFilterFrom', 'preOrderFilterTo', 'preOrderFilterNotifyStatus', 'preOrderFilterResponseStatus'].forEach((id) => {
     el(id).addEventListener('input', () => {
       preOrdersPage = 1;
       renderPreOrdersTable();

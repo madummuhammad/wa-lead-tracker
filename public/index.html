@@ -558,11 +558,32 @@
               <option value="all">Semua CS</option>
             </select>
           </label>
+          <label>Akun WA
+            <select id="preOrderFilterOwner">
+              <option value="all">Semua akun</option>
+            </select>
+          </label>
           <label>Produk
             <div class="multiselect" id="preOrderFilterProductMulti">
               <button type="button" class="multiselect-toggle" id="preOrderFilterProductToggle">Semua produk</button>
               <div class="multiselect-panel hidden" id="preOrderFilterProductPanel"></div>
             </div>
+          </label>
+          <label>Status Kabar
+            <select id="preOrderFilterNotifyStatus">
+              <option value="all">Semua Status Kabar</option>
+              <option value="belum">Belum Dikabari</option>
+              <option value="proses">Di Proses</option>
+              <option value="dikirim">Dikirim</option>
+            </select>
+          </label>
+          <label>Status Respon
+            <select id="preOrderFilterResponseStatus">
+              <option value="all">Semua Status Respon</option>
+              <option value="belum_membalas">Belum Membalas</option>
+              <option value="jadi_dikirim">Jadi Dikirim</option>
+              <option value="dibatalkan">Dibatalkan</option>
+            </select>
           </label>
         </section>
 
@@ -587,6 +608,7 @@
                 <th data-col="statusRespon">Status Respon</th>
                 <th data-col="namaCustomer">Nama Customer</th>
                 <th data-col="noHp">No HP</th>
+                <th data-col="akunWa">Akun WA</th>
                 <th data-col="alamat">Alamat Lengkap</th>
                 <th data-col="produk">Produk</th>
                 <th data-col="qty">Qty</th>
