@@ -1400,10 +1400,20 @@ function renderPreOrdersTable() {
       <td>${escapeHtml(dateDisplay)}</td>
       <td>${escapeHtml(preOrder.customerName || '-')}</td>
       <td>${escapeHtml(preOrder.customerPhone || '-')}</td>
+      <td>${escapeHtml(preOrder.address || '-')}</td>
       <td>${escapeHtml(preOrder.productName || '-')}</td>
       <td>${escapeHtml(preOrder.qty ?? '-')}</td>
+      <td>${escapeHtml(formatRupiah(preOrder.unitPrice))}</td>
+      <td>${escapeHtml(formatRupiah(preOrder.totalPrice))}</td>
+      <td>${escapeHtml(formatRupiah(preOrder.shippingCost))}</td>
+      <td>${escapeHtml(formatRupiah(preOrder.totalBill))}</td>
+      <td>${escapeHtml(preOrder.paymentMethod || '-')}</td>
       <td>${escapeHtml(preOrder.noResi || '-')}</td>
       <td>${escapeHtml(preOrder.statusOrder || '-')}</td>
+      <td>${escapeHtml(preOrder.campaignSource || '-')}</td>
+      <td>${escapeHtml(preOrder.note || '-')}</td>
+      <td>${preOrder.lincah ? '✓' : '-'}</td>
+      <td>${preOrder.aneka ? '✓' : '-'}</td>
       <td><span class="notify-pill notify-pill--${notifyStatus.state}">${escapeHtml(notifyStatus.text)}</span></td>
       <td>${escapeHtml(preOrder.createdByEmail || '-')}</td>
       <td>
