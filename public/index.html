@@ -246,22 +246,10 @@
       <section id="produkPage" class="page hidden">
         <header class="page-header">
           <h1>Produk</h1>
-        </header>
-
-        <section class="block">
-          <h2>Tambah Produk Baru</h2>
-          <div class="user-form">
-            <input type="text" id="newProductName" placeholder="Nama produk" />
-            <input type="number" id="newProductPrice" placeholder="Harga jual" min="0" />
-            <input type="number" id="newProductWeight" placeholder="Berat (gram)" min="0" />
-            <input type="number" id="newProductVolume" placeholder="Volume (cm³)" min="0" />
-            <input type="number" id="newProductLength" placeholder="Panjang (cm)" min="0" />
-            <input type="number" id="newProductWidth" placeholder="Lebar (cm)" min="0" />
-            <input type="number" id="newProductHeight" placeholder="Tinggi (cm)" min="0" />
-            <button id="addProductBtn">Tambah</button>
+          <div class="page-header-actions">
+            <button id="productAddOpenBtn" class="btn-primary">+ Tambah Produk Baru</button>
           </div>
-          <p id="productFormMsg" class="error-msg"></p>
-        </section>
+        </header>
 
         <section class="bulk-actions">
           <div class="multiselect column-toggle" id="produkColumnMulti">
@@ -275,6 +263,8 @@
             <thead>
               <tr>
                 <th data-col="nama">Nama Produk</th>
+                <th data-col="sku">SKU</th>
+                <th data-col="alamatGudang">Alamat Gudang</th>
                 <th data-col="harga">Harga Jual</th>
                 <th data-col="berat">Berat (gram)</th>
                 <th data-col="volume">Volume (cm³)</th>
@@ -288,6 +278,76 @@
           </table>
           <div id="productsEmptyState" class="notice hidden">Belum ada produk.</div>
         </section>
+
+        <!-- Modal: Tambah/Edit Produk -->
+        <div id="productFormModal" class="modal-overlay hidden">
+          <div class="modal-box">
+            <div class="modal-header">
+              <h2 id="productFormTitle">Tambah Produk Baru</h2>
+              <button class="modal-close-btn" id="productFormCloseBtn">&times;</button>
+            </div>
+            <div class="form-section">
+              <div class="form-grid">
+                <label class="form-field form-field-wide">
+                  <span>Nama Produk</span>
+                  <input type="text" id="productName" placeholder="Nama produk" />
+                </label>
+                <span id="productSkuPartsWrap" style="display: contents;">
+                  <label class="form-field">
+                    <span>Kode SKU 1</span>
+                    <input type="text" id="productSkuPart1" placeholder="mis. ABC" />
+                  </label>
+                  <label class="form-field">
+                    <span>Kode SKU 2</span>
+                    <input type="text" id="productSkuPart2" placeholder="mis. XYZ" />
+                  </label>
+                </span>
+                <label class="form-field" id="productSkuEditWrap">
+                  <span>SKU</span>
+                  <input type="text" id="productSku" />
+                </label>
+                <label class="form-field">
+                  <span>Alamat Gudang</span>
+                  <input type="text" id="productWarehouseAddress" placeholder="Alamat gudang" />
+                </label>
+                <label class="form-field">
+                  <span>Harga Jual</span>
+                  <input type="number" id="productPrice" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Berat (gram)</span>
+                  <input type="number" id="productWeight" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Volume (cm³)</span>
+                  <input type="number" id="productVolume" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Panjang (cm)</span>
+                  <input type="number" id="productLength" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Lebar (cm)</span>
+                  <input type="number" id="productWidth" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Tinggi (cm)</span>
+                  <input type="number" id="productHeight" min="0" />
+                </label>
+              </div>
+              <p id="productSkuHint" class="hint">
+                SKU digenerate otomatis dari Kode SKU 1 + Kode SKU 2 + nomor urut
+                (mis. "ABC-XYZ1") - kalau kombinasi kode itu sudah dipakai produk
+                lain, nomor urutnya otomatis naik supaya tetap unik.
+              </p>
+            </div>
+            <p id="productFormMsg" class="error-msg"></p>
+            <div class="modal-actions">
+              <button id="productSaveBtn" class="btn-primary">Tambah</button>
+              <button id="productCancelEditBtn" class="btn-outline">Batal</button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- ================= PESANAN PAGE ================= -->

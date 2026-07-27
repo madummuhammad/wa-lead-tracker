@@ -279,8 +279,24 @@ function createApp() {
   }
 
   function serializeProduct(doc) {
-    const { _id, name, price, weight, volume, length, width, height } = doc;
-    return { id: _id, name, price, weight, volume, length, width, height };
+    const { _id, name, sku, warehouseAddress, price, weight, volume, length, width, height } = doc;
+    return { id: _id, name, sku, warehouseAddress, price, weight, volume, length, width, height };
+  }
+
+  // "{part1}-{part2}" + the smallest sequence number (starting at 1, no
+  // separator before it) not already taken by that exact base - so two
+  // products entered with the same two parts still end up with distinct
+  // SKUs instead of erroring out on the admin. Capped rather than looping
+  // forever on the pathological case of thousands of products sharing a base.
+  async function generateUniqueSku(part1, part2) {
+    const base = `${part1}-${part2}`;
+    for (let seq = 1; seq <= 9999; seq++) {
+      const candidate = `${base}${seq}`;
+      // eslint-disable-next-line no-await-in-loop
+      const exists = await Product.exists({ sku: candidate });
+      if (!exists) return candidate;
+    }
+    throw new Error(`terlalu banyak produk dengan kode SKU "${base}" - coba kode yang berbeda`);
   }
 
   app.get('/api/products', requireAuth, async (req, res) => {
@@ -295,7 +311,7 @@ function createApp() {
 
   app.post('/api/products', requireAuth, async (req, res) => {
     try {
-      const { name, price } = req.body || {};
+      const { name, price, skuPart1, skuPart2, warehouseAddress } = req.body || {};
       if (!name || typeof name !== 'string' || !name.trim()) {
         return res.status(400).json({ error: 'name is required' });
       }
@@ -303,13 +319,26 @@ function createApp() {
       if (!Number.isFinite(priceNum) || priceNum < 0) {
         return res.status(400).json({ error: 'price must be a non-negative number' });
       }
+      if (!skuPart1 || typeof skuPart1 !== 'string' || !skuPart1.trim()) {
+        return res.status(400).json({ error: 'Kode SKU bagian 1 wajib diisi' });
+      }
+      if (!skuPart2 || typeof skuPart2 !== 'string' || !skuPart2.trim()) {
+        return res.status(400).json({ error: 'Kode SKU bagian 2 wajib diisi' });
+      }
       let dims;
       try {
         dims = parseProductDimensions(req.body || {});
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }
-      const product = await Product.create({ name: name.trim(), price: priceNum, ...dims });
+      const sku = await generateUniqueSku(skuPart1.trim(), skuPart2.trim());
+      const product = await Product.create({
+        name: name.trim(),
+        price: priceNum,
+        sku,
+        warehouseAddress: warehouseAddress && String(warehouseAddress).trim() ? String(warehouseAddress).trim() : undefined,
+        ...dims,
+      });
       res.json({ ok: true, product: serializeProduct(product) });
     } catch (e) {
       res.status(500).json({ error: String(e) });
@@ -318,7 +347,7 @@ function createApp() {
 
   app.put('/api/products/:id', requireAuth, async (req, res) => {
     try {
-      const { name, price } = req.body || {};
+      const { name, price, sku, warehouseAddress } = req.body || {};
       if (!name || typeof name !== 'string' || !name.trim()) {
         return res.status(400).json({ error: 'name is required' });
       }
@@ -332,14 +361,31 @@ function createApp() {
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }
-      // $unset any dimension field not present in this request, so clearing a
-      // field on the client (leaving it blank) actually clears it server-side
-      // instead of leaving the old value behind.
+      // SKU is free-text on edit (not regenerated - see the schema comment)
+      // but still has to stay unique, so check by hand rather than letting a
+      // duplicate hit the unique index and surface as a raw Mongo error.
+      const skuTrimmed = sku && String(sku).trim() ? String(sku).trim() : '';
+      if (skuTrimmed) {
+        const clash = await Product.findOne({ sku: skuTrimmed, _id: { $ne: req.params.id } }).lean();
+        if (clash) return res.status(409).json({ error: `SKU "${skuTrimmed}" sudah dipakai produk lain (${clash.name})` });
+      }
+      const warehouseTrimmed = warehouseAddress && String(warehouseAddress).trim() ? String(warehouseAddress).trim() : '';
+
+      // $unset any dimension/sku/warehouseAddress field not present in this
+      // request, so clearing a field on the client (leaving it blank)
+      // actually clears it server-side instead of leaving the old value behind.
       const unset = {};
       PRODUCT_DIMENSION_FIELDS.forEach((field) => {
         if (!(field in dims)) unset[field] = '';
       });
-      const update = { $set: { name: name.trim(), price: priceNum, ...dims } };
+      if (!skuTrimmed) unset.sku = '';
+      if (!warehouseTrimmed) unset.warehouseAddress = '';
+
+      const set = { name: name.trim(), price: priceNum, ...dims };
+      if (skuTrimmed) set.sku = skuTrimmed;
+      if (warehouseTrimmed) set.warehouseAddress = warehouseTrimmed;
+
+      const update = { $set: set };
       if (Object.keys(unset).length > 0) update.$unset = unset;
       const product = await Product.findByIdAndUpdate(req.params.id, update, { new: true }).lean();
       if (!product) return res.status(404).json({ error: 'product not found' });

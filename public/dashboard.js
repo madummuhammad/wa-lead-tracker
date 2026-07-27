@@ -45,7 +45,10 @@ async function apiPut(path, body) {
     body: JSON.stringify(body),
   });
   if (res.status === 401) throw new Error('unauthorized');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
   return res.json();
 }
 
@@ -632,51 +635,26 @@ function renderProductsTable() {
     .slice()
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
     .forEach((product) => {
+      const dimCells = PRODUCT_DIM_FIELDS
+        .map((field) => `<td data-col="${PRODUCT_DIM_COL[field]}">${escapeHtml(formatDim(product[field]))}</td>`)
+        .join('');
       const tr = document.createElement('tr');
-      if (editingProductId === product.id) {
-        const dimInputs = PRODUCT_DIM_FIELDS
-          .map((field) => `<td data-col="${PRODUCT_DIM_COL[field]}"><input type="number" class="edit-product-${field}" min="0" value="${escapeHtml(product[field] ?? '')}" /></td>`)
-          .join('');
-        tr.innerHTML = `
-          <td data-col="nama"><input type="text" class="edit-product-name" value="${escapeHtml(product.name)}" /></td>
-          <td data-col="harga"><input type="number" class="edit-product-price" min="0" value="${escapeHtml(product.price)}" /></td>
-          ${dimInputs}
-          <td>
-            <button class="save-product-btn" data-id="${escapeHtml(product.id)}">Simpan</button>
-            <button class="cancel-product-btn">Batal</button>
-          </td>
-        `;
-      } else {
-        const dimCells = PRODUCT_DIM_FIELDS
-          .map((field) => `<td data-col="${PRODUCT_DIM_COL[field]}">${escapeHtml(formatDim(product[field]))}</td>`)
-          .join('');
-        tr.innerHTML = `
-          <td data-col="nama">${escapeHtml(product.name)}</td>
-          <td data-col="harga">${escapeHtml(formatRupiah(product.price))}</td>
-          ${dimCells}
-          <td>
-            <button class="edit-product-btn" data-id="${escapeHtml(product.id)}">Edit</button>
-            <button class="delete-product-btn" data-id="${escapeHtml(product.id)}">Hapus</button>
-          </td>
-        `;
-      }
+      tr.innerHTML = `
+        <td data-col="nama">${escapeHtml(product.name)}</td>
+        <td data-col="sku">${escapeHtml(product.sku || '-')}</td>
+        <td data-col="alamatGudang">${escapeHtml(product.warehouseAddress || '-')}</td>
+        <td data-col="harga">${escapeHtml(formatRupiah(product.price))}</td>
+        ${dimCells}
+        <td>
+          <button class="edit-product-btn" data-id="${escapeHtml(product.id)}">Edit</button>
+          <button class="delete-product-btn" data-id="${escapeHtml(product.id)}">Hapus</button>
+        </td>
+      `;
       tbody.appendChild(tr);
     });
 
   tbody.querySelectorAll('.edit-product-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      editingProductId = btn.dataset.id;
-      renderProductsTable();
-    });
-  });
-  tbody.querySelectorAll('.cancel-product-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      editingProductId = null;
-      renderProductsTable();
-    });
-  });
-  tbody.querySelectorAll('.save-product-btn').forEach((btn) => {
-    btn.addEventListener('click', () => saveProductEdit(btn.dataset.id, tbody));
+    btn.addEventListener('click', () => startEditProduct(btn.dataset.id));
   });
   tbody.querySelectorAll('.delete-product-btn').forEach((btn) => {
     btn.addEventListener('click', () => deleteProduct(btn.dataset.id));
@@ -697,9 +675,60 @@ function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
-async function addProduct() {
-  const name = el('newProductName').value.trim();
-  const price = el('newProductPrice').value;
+// Add vs edit show different SKU inputs - two required parts to generate a
+// fresh SKU on add, one free-text field to tweak the already-generated SKU
+// on edit (see server/app.js generateUniqueSku/PUT /api/products/:id).
+function setProductSkuMode(mode) {
+  el('productSkuPartsWrap').style.display = mode === 'add' ? 'contents' : 'none';
+  el('productSkuEditWrap').style.display = mode === 'add' ? 'none' : '';
+  el('productSkuHint').style.display = mode === 'add' ? '' : 'none';
+}
+
+function resetProductForm() {
+  el('productName').value = '';
+  el('productSkuPart1').value = '';
+  el('productSkuPart2').value = '';
+  el('productSku').value = '';
+  el('productWarehouseAddress').value = '';
+  el('productPrice').value = '';
+  PRODUCT_DIM_FIELDS.forEach((field) => { el(`product${capitalize(field)}`).value = ''; });
+  editingProductId = null;
+  el('productFormTitle').textContent = 'Tambah Produk Baru';
+  el('productSaveBtn').textContent = 'Tambah';
+  el('productFormMsg').textContent = '';
+  setProductSkuMode('add');
+}
+
+function openProductAddModal() {
+  resetProductForm();
+  el('productFormModal').classList.remove('hidden');
+}
+
+function closeProductFormModal() {
+  el('productFormModal').classList.add('hidden');
+  resetProductForm();
+}
+
+function startEditProduct(id) {
+  const product = allProducts.find((p) => p.id === id);
+  if (!product) return;
+  el('productName').value = product.name || '';
+  el('productSku').value = product.sku || '';
+  el('productWarehouseAddress').value = product.warehouseAddress || '';
+  el('productPrice').value = product.price ?? '';
+  PRODUCT_DIM_FIELDS.forEach((field) => { el(`product${capitalize(field)}`).value = product[field] ?? ''; });
+  editingProductId = id;
+  el('productFormTitle').textContent = 'Edit Produk';
+  el('productSaveBtn').textContent = 'Simpan Perubahan';
+  el('productFormMsg').textContent = '';
+  setProductSkuMode('edit');
+  el('productFormModal').classList.remove('hidden');
+}
+
+async function saveProduct() {
+  const name = el('productName').value.trim();
+  const warehouseAddress = el('productWarehouseAddress').value.trim();
+  const price = el('productPrice').value;
   el('productFormMsg').textContent = '';
   if (!name || price === '') {
     el('productFormMsg').textContent = 'Isi nama produk dan harga jual.';
@@ -707,42 +736,34 @@ async function addProduct() {
   }
   const dims = {};
   PRODUCT_DIM_FIELDS.forEach((field) => {
-    const val = el(`newProduct${capitalize(field)}`).value;
+    const val = el(`product${capitalize(field)}`).value;
     if (val !== '') dims[field] = Number(val);
   });
+
   try {
-    await apiPost('/api/products', { name, price: Number(price), ...dims });
-    el('newProductName').value = '';
-    el('newProductPrice').value = '';
-    PRODUCT_DIM_FIELDS.forEach((field) => { el(`newProduct${capitalize(field)}`).value = ''; });
+    if (editingProductId) {
+      const sku = el('productSku').value.trim();
+      await apiPut(`/api/products/${editingProductId}`, { name, sku, warehouseAddress, price: Number(price), ...dims });
+    } else {
+      const skuPart1 = el('productSkuPart1').value.trim();
+      const skuPart2 = el('productSkuPart2').value.trim();
+      if (!skuPart1 || !skuPart2) {
+        el('productFormMsg').textContent = 'Isi Kode SKU 1 dan Kode SKU 2 (keduanya wajib).';
+        return;
+      }
+      await apiPost('/api/products', { name, skuPart1, skuPart2, warehouseAddress, price: Number(price), ...dims });
+    }
+    closeProductFormModal();
     await loadProducts();
   } catch (e) {
     if (e.message === 'unauthorized') {
       handleApiError(e);
       return;
     }
-    el('productFormMsg').textContent = e.message || 'Gagal menambah produk.';
-  }
-}
-
-async function saveProductEdit(id, tbody) {
-  const name = tbody.querySelector('.edit-product-name').value.trim();
-  const price = tbody.querySelector('.edit-product-price').value;
-  if (!name || price === '') {
-    window.alert('Isi nama produk dan harga jual.');
-    return;
-  }
-  const dims = {};
-  PRODUCT_DIM_FIELDS.forEach((field) => {
-    const val = tbody.querySelector(`.edit-product-${field}`).value;
-    if (val !== '') dims[field] = Number(val);
-  });
-  try {
-    await apiPut(`/api/products/${id}`, { name, price: Number(price), ...dims });
-    editingProductId = null;
-    await loadProducts();
-  } catch (e) {
-    handleApiError(e, 'Gagal menyimpan produk.');
+    // SKU conflicts (409) and other validation errors come back with a
+    // specific message - worth showing as-is rather than a generic one the
+    // admin can't act on.
+    el('productFormMsg').textContent = e.message || 'Gagal menyimpan produk.';
   }
 }
 
@@ -1186,6 +1207,17 @@ function importOrdersFromPreOrderPage() {
 
 let editingPreOrderId = null;
 
+// "SKU-Nama Produk" display for the Pra-Pesanan page specifically (table
+// column + product picker below) - looked up from the Product catalog by
+// name, since PreOrder.productName only ever stores the plain name. Falls
+// back to the plain name when there's no matching catalog product (deleted
+// since, or never had a SKU) rather than showing a dangling "-Nama".
+function formatProductLabelWithSku(name) {
+  if (!name) return name;
+  const product = allProducts.find((p) => p.name === name);
+  return product && product.sku ? `${product.sku}-${name}` : name;
+}
+
 // Options come from the Product catalog (same source of truth as the Produk
 // page), not free text - keeps a pre-order's product name matchable against
 // real lincah orders later. Keep an already-picked product selectable even
@@ -1196,7 +1228,7 @@ function populatePreOrderProductSelect(currentValue) {
   const names = Array.from(new Set(allProducts.map((p) => p.name).filter(Boolean))).sort();
   if (currentValue && !names.includes(currentValue)) names.unshift(currentValue);
   select.innerHTML = '<option value="">Pilih Produk</option>' +
-    names.map((name) => `<option value="${escapeHtml(name)}" ${name === currentValue ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('');
+    names.map((name) => `<option value="${escapeHtml(name)}" ${name === currentValue ? 'selected' : ''}>${escapeHtml(formatProductLabelWithSku(name))}</option>`).join('');
 }
 
 // Harga Satuan is pre-filled from the catalog price when a product is
@@ -1588,7 +1620,7 @@ function renderPreOrdersTable() {
       <td data-col="noHp">${escapeHtml(preOrder.customerPhone || '-')}</td>
       <td data-col="akunWa">${escapeHtml(preOrderOwnerNumber(preOrder) || '-')}</td>
       <td data-col="alamat">${escapeHtml(preOrder.address || '-')}</td>
-      <td data-col="produk">${escapeHtml(preOrder.productName || '-')}</td>
+      <td data-col="produk">${escapeHtml(preOrder.productName ? formatProductLabelWithSku(preOrder.productName) : '-')}</td>
       <td data-col="qty">${escapeHtml(preOrder.qty ?? '-')}</td>
       <td data-col="hargaSatuan">${escapeHtml(formatRupiah(preOrder.unitPrice))}</td>
       <td data-col="totalHarga">${escapeHtml(formatRupiah(preOrder.totalPrice))}</td>
@@ -1940,7 +1972,11 @@ function switchPage(page) {
   if (page === 'dashboard') renderDashboard();
   if (page === 'produk') loadProducts();
   if (page === 'pesanan') loadOrders();
-  if (page === 'praPesanan') loadPreOrders();
+  // loadProducts() first, not just loadPreOrders() - the table's Produk
+  // column needs the catalog already loaded to show the "SKU-Nama Produk"
+  // label (see formatProductLabelWithSku), so it has to resolve before
+  // loadPreOrders() renders the table, not just run alongside it.
+  if (page === 'praPesanan') loadProducts().then(loadPreOrders);
   if (page === 'templates') loadTemplates();
   if (page === 'users') loadUsers();
 }
@@ -2008,7 +2044,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     btn.addEventListener('click', () => switchPage(btn.dataset.page));
   });
   el('addUserBtn').addEventListener('click', addUser);
-  el('addProductBtn').addEventListener('click', addProduct);
+  el('productAddOpenBtn').addEventListener('click', openProductAddModal);
+  el('productFormCloseBtn').addEventListener('click', closeProductFormModal);
+  el('productCancelEditBtn').addEventListener('click', closeProductFormModal);
+  el('productSaveBtn').addEventListener('click', saveProduct);
   el('orderImportBtn').addEventListener('click', importOrders);
   el('preOrderImportBtn').addEventListener('click', importPreOrders);
   el('preOrderLincahImportBtn').addEventListener('click', importOrdersFromPreOrderPage);
@@ -2039,6 +2078,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     ['preOrderImportModal', closePreOrderImportModal],
     ['preOrderLincahImportModal', closePreOrderLincahImportModal],
     ['templateFormModal', closeTemplateFormModal],
+    ['productFormModal', closeProductFormModal],
   ].forEach(([modalId, closeFn]) => {
     const overlay = el(modalId);
     let mouseDownOnBackdrop = false;
