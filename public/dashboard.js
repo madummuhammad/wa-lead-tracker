@@ -1419,6 +1419,87 @@ function preOrderNotifyStatus(preOrder) {
   return { state: 'belum', text: 'Belum Dikabari' };
 }
 
+// Clicking the Status Kabar pill advances it one stage - Belum Dikabari ->
+// Di Proses -> Dikirim -> back to Belum Dikabari - writing to the same
+// Chat.preOrderNotified/resiNotified fields (with their paired *UpdatedAt
+// timestamps) the extension's floating panel toggles, so an edit made here
+// is indistinguishable from one made in WhatsApp Web and merges the same way
+// across devices. Dikirim is only reachable once this row has actually
+// become a real Pesanan (preOrder.convertedOrderId set) - clicking Di Proses
+// before that just cycles back to Belum Dikabari instead, since there's no
+// resi to have told the customer about yet.
+async function togglePreOrderNotifyStatus(id) {
+  const preOrder = allPreOrders.find((p) => p.id === id);
+  if (!preOrder) return;
+  if (!preOrder.customerPhone) {
+    alert('Pra-pesanan ini tidak punya nomor HP/WA, jadi statusnya tidak bisa disimpan.');
+    return;
+  }
+
+  const status = preOrderNotifyStatus(preOrder);
+  const chat = { ...(allChats[preOrder.customerPhone] || { id: preOrder.customerPhone, phone: preOrder.customerPhone }) };
+  const now = new Date().toISOString();
+
+  if (status.state === 'belum') {
+    chat.preOrderNotified = true;
+    chat.preOrderNotifiedOrderNumber = preOrder.orderNumber;
+    chat.preOrderNotifiedUpdatedAt = now;
+  } else if (status.state === 'proses' && preOrder.convertedOrderId) {
+    chat.resiNotified = true;
+    chat.resiNotifiedOrderId = preOrder.convertedOrderId;
+    chat.resiNotifiedUpdatedAt = now;
+  } else {
+    // Either already "Dikirim", or "Di Proses" with no Order to attach a
+    // resi status to yet - both cases reset to the start of the cycle.
+    chat.preOrderNotified = false;
+    chat.preOrderNotifiedUpdatedAt = now;
+    chat.resiNotified = false;
+    chat.resiNotifiedUpdatedAt = now;
+  }
+
+  try {
+    await apiPut('/api/chats', { [preOrder.customerPhone]: chat });
+    allChats[preOrder.customerPhone] = chat;
+    renderPreOrdersTable();
+  } catch (e) {
+    handleApiError(e, 'Gagal menyimpan status kabar.');
+  }
+}
+
+// Status Respon - whether the customer actually replied to the CS's
+// confirmation message, as opposed to Status Kabar above (whether *this
+// business* told the customer something). Lives directly on the PreOrder
+// itself (PreOrder.responseStatus), not on Chat - it's specific to this one
+// pre-order's confirmation, not a per-contact fact. Edited the same
+// click-to-cycle way as Status Kabar, but through its own dedicated
+// PUT /api/preorders/:id/response-status (see server/app.js) rather than the
+// general pre-order PUT, since that one always rewrites the whole record.
+const RESPONSE_STATUS_CYCLE = ['belum_membalas', 'jadi_dikirim', 'dibatalkan'];
+const RESPONSE_STATUS_LABELS = {
+  belum_membalas: 'Belum Membalas',
+  jadi_dikirim: 'Jadi Dikirim',
+  dibatalkan: 'Dibatalkan',
+};
+
+function preOrderResponseStatus(preOrder) {
+  const state = RESPONSE_STATUS_CYCLE.includes(preOrder.responseStatus) ? preOrder.responseStatus : 'belum_membalas';
+  return { state, text: RESPONSE_STATUS_LABELS[state] };
+}
+
+async function togglePreOrderResponseStatus(id) {
+  const preOrder = allPreOrders.find((p) => p.id === id);
+  if (!preOrder) return;
+  const current = preOrderResponseStatus(preOrder).state;
+  const next = RESPONSE_STATUS_CYCLE[(RESPONSE_STATUS_CYCLE.indexOf(current) + 1) % RESPONSE_STATUS_CYCLE.length];
+  try {
+    await apiPut(`/api/preorders/${id}/response-status`, { responseStatus: next });
+    preOrder.responseStatus = next;
+    renderPreOrdersTable();
+  } catch (e) {
+    handleApiError(e, 'Gagal menyimpan status respon.');
+  }
+}
+
 function renderPreOrdersTable() {
   populatePreOrderCreatorFilterSelect(el('preOrderFilterCreator'));
   const preOrderProductNames = Array.from(new Set(allPreOrders.map((p) => p.productName).filter(Boolean))).sort();
@@ -1468,13 +1549,19 @@ function renderPreOrdersTable() {
       ? new Date(preOrder.orderDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
       : '-';
     const notifyStatus = preOrderNotifyStatus(preOrder);
+    const responseStatus = preOrderResponseStatus(preOrder);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><input type="checkbox" class="preorder-row-checkbox" data-id="${escapeHtml(preOrder.id)}" ${selectedPreOrderIds.has(preOrder.id) ? 'checked' : ''} /></td>
       <td data-col="noOrder">${escapeHtml(preOrder.orderNumber || '-')}</td>
       <td data-col="noOrderPesanan">${escapeHtml(preOrder.convertedOrderId || '-')}</td>
       <td data-col="tanggalOrder">${escapeHtml(dateDisplay)}</td>
-      <td data-col="statusKabar"><span class="notify-pill notify-pill--${notifyStatus.state}">${escapeHtml(notifyStatus.text)}</span></td>
+      <td data-col="statusKabar">
+        <button type="button" class="notify-pill notify-pill--${notifyStatus.state} notify-pill-btn" data-id="${escapeHtml(preOrder.id)}" title="Klik untuk ubah status: Belum Dikabari → Di Proses → Dikirim → ulang">${escapeHtml(notifyStatus.text)}</button>
+      </td>
+      <td data-col="statusRespon">
+        <button type="button" class="response-pill response-pill--${responseStatus.state} response-pill-btn" data-id="${escapeHtml(preOrder.id)}" title="Klik untuk ubah status: Belum Membalas → Jadi Dikirim → Dibatalkan → ulang">${escapeHtml(responseStatus.text)}</button>
+      </td>
       <td data-col="namaCustomer">${escapeHtml(preOrder.customerName || '-')}</td>
       <td data-col="noHp">${escapeHtml(preOrder.customerPhone || '-')}</td>
       <td data-col="alamat">${escapeHtml(preOrder.address || '-')}</td>
@@ -1512,6 +1599,12 @@ function renderPreOrdersTable() {
   });
   tbody.querySelectorAll('.delete-preorder-btn').forEach((btn) => {
     btn.addEventListener('click', () => deletePreOrder(btn.dataset.id));
+  });
+  tbody.querySelectorAll('.notify-pill-btn').forEach((btn) => {
+    btn.addEventListener('click', () => togglePreOrderNotifyStatus(btn.dataset.id));
+  });
+  tbody.querySelectorAll('.response-pill-btn').forEach((btn) => {
+    btn.addEventListener('click', () => togglePreOrderResponseStatus(btn.dataset.id));
   });
 
   updatePreOrdersSelectionUi();

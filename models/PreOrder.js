@@ -50,6 +50,20 @@ const preOrderSchema = new mongoose.Schema(
     lincah: Boolean, // LINCAH column - exact meaning not confirmed, kept as-is
     aneka: Boolean, // ANEKA column - exact meaning not confirmed, kept as-is
     ctt: String, // CTT column - exact meaning not confirmed, kept as-is
+    // Whether the customer has actually replied to the CS's confirmation
+    // message for this specific pre-order ("Kami mau mengkonfirmasi apakah
+    // kakak jadi pesan?" - see wa-ektension's Kabari Proses template flow) -
+    // distinct from statusOrder above (a free-text field from the manual
+    // tracking sheet) and from Chat.preOrderNotified/resiNotified (whether
+    // *this business* has told the customer something, not what the customer
+    // said back). Edited via PUT /api/preorders/:id/response-status, cycled
+    // in the dashboard's Pra-Pesanan table (see dashboard.js
+    // togglePreOrderResponseStatus).
+    responseStatus: {
+      type: String,
+      enum: ['belum_membalas', 'jadi_dikirim', 'dibatalkan'],
+      default: 'belum_membalas',
+    },
   },
   { timestamps: true }
 );

@@ -562,6 +562,56 @@ tbody tr:hover { background: #fafcfb; }
   color: #ffffff;
 }
 
+/* Status Kabar as an editable control (Pra-Pesanan table) - same pill look,
+   just reset to remove native <button> chrome and add a hover cue so it
+   reads as clickable, not just a static label. */
+.notify-pill-btn {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+.notify-pill-btn:hover {
+  filter: brightness(0.95);
+}
+.notify-pill-btn:active {
+  filter: brightness(0.88);
+}
+
+/* Status Respon - whether the customer replied to the confirmation message,
+   same pill/button styling as Status Kabar, different color set so the two
+   columns stay visually distinguishable from each other. */
+.response-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.response-pill--belum_membalas {
+  background: #e4e6ef;
+  color: #54596e;
+}
+.response-pill--jadi_dikirim {
+  background: #d9f0e6;
+  color: #1e7e4f;
+}
+.response-pill--dibatalkan {
+  background: #fdeaea;
+  color: #b3261e;
+}
+.response-pill-btn {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+.response-pill-btn:hover {
+  filter: brightness(0.95);
+}
+.response-pill-btn:active {
+  filter: brightness(0.88);
+}
+
 .closing-toggle {
   font-size: 11px;
   cursor: pointer;

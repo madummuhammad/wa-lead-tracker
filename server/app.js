@@ -947,6 +947,32 @@ function createApp() {
     }
   });
 
+  // Separate, single-field route rather than folding this into the general
+  // PUT /api/preorders/:id above - that route always rewrites orderDate/
+  // customerPhone/productName/productId from the request body (the edit
+  // form always sends the full record), so a partial `{ responseStatus }`
+  // body through it would risk blanking out those fields. This one only
+  // ever touches responseStatus, so the dashboard's Status Respon pill can
+  // send just that with no risk to the rest of the row.
+  const RESPONSE_STATUS_VALUES = ['belum_membalas', 'jadi_dikirim', 'dibatalkan'];
+  app.put('/api/preorders/:id/response-status', requireAuth, async (req, res) => {
+    try {
+      const { responseStatus } = req.body || {};
+      if (!RESPONSE_STATUS_VALUES.includes(responseStatus)) {
+        return res.status(400).json({ error: `responseStatus must be one of: ${RESPONSE_STATUS_VALUES.join(', ')}` });
+      }
+      const preOrder = await PreOrder.findByIdAndUpdate(
+        req.params.id,
+        { $set: { responseStatus } },
+        { new: true }
+      );
+      if (!preOrder) return res.status(404).json({ error: 'pre-order not found' });
+      res.json({ ok: true, preOrder: serializePreOrder(preOrder) });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   app.delete('/api/preorders/:id', requireAuth, async (req, res) => {
     try {
       await PreOrder.findByIdAndDelete(req.params.id);
