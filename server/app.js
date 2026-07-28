@@ -1408,11 +1408,35 @@ function createApp() {
       const closingCount = filteredChats.filter(isClosingChat).length;
       const closingRate = chatMasuk > 0 ? Math.round((closingCount / chatMasuk) * 1000) / 10 : 0;
 
+      // Harga riil per order = Nilai COD dikurangi Ongkos Kirim dan Biaya COD
+      // (bukan field price mentah), sama seperti kolom Harga di halaman Pesanan.
+      const orderRealPrice = (o) => (o.codValue || 0) - (o.shippingCost || 0) - (o.codFee || 0);
+
       const nonCancelledOrders = filteredOrders.filter((o) => o.status !== 'Dibatalkan');
       const cancelledCount = filteredOrders.filter((o) => o.status === 'Dibatalkan').length;
       const deliveredCount = filteredOrders.filter((o) => o.status === 'Diterima').length;
-      const totalOmset = nonCancelledOrders.reduce((sum, o) => sum + (o.price || 0), 0);
+      const totalOmset = nonCancelledOrders.reduce((sum, o) => sum + orderRealPrice(o), 0);
+      const totalOngkir = nonCancelledOrders.reduce((sum, o) => sum + (o.shippingCost || 0), 0);
+      const totalBiayaCod = nonCancelledOrders.reduce((sum, o) => sum + (o.codFee || 0), 0);
       const totalPesanan = filteredOrders.length;
+
+      // Omset + jumlah pesanan per status - satu card per status di dashboard.
+      // "Diterima" dipecah jadi dua label: yang sudah direkonsiliasi tetap
+      // "Diterima", yang belum jadi "Menunggu Rekonsiliasi" - supaya omset
+      // yang statusnya belum final terlihat terpisah dari yang sudah pasti.
+      const statusBuckets = new Map();
+      filteredOrders.forEach((o) => {
+        let label = o.status || '(Tanpa Status)';
+        if (label === 'Diterima' && o.reconciliationStatus !== 'Sudah Rekonsiliasi') {
+          label = 'Menunggu Rekonsiliasi';
+        }
+        const entry = statusBuckets.get(label) || { label, omset: 0, count: 0 };
+        entry.omset += orderRealPrice(o);
+        entry.count += 1;
+        statusBuckets.set(label, entry);
+      });
+      const omsetByStatus = Array.from(statusBuckets.values()).sort((a, b) => b.count - a.count);
+
       const avgOrderValue = nonCancelledOrders.length > 0 ? Math.round(totalOmset / nonCancelledOrders.length) : 0;
       const cancellationRate = totalPesanan > 0 ? Math.round((cancelledCount / totalPesanan) * 1000) / 10 : 0;
 
@@ -1423,7 +1447,7 @@ function createApp() {
       nonCancelledOrders.forEach((o) => {
         if (!o.createdDate) return;
         const day = new Date(o.createdDate).toISOString().slice(0, 10);
-        revenueByDayMap.set(day, (revenueByDayMap.get(day) || 0) + (o.price || 0));
+        revenueByDayMap.set(day, (revenueByDayMap.get(day) || 0) + orderRealPrice(o));
       });
       const revenueByDay = Array.from(revenueByDayMap.entries())
         .map(([date, omset]) => ({ date, omset }))
@@ -1445,7 +1469,7 @@ function createApp() {
       nonCancelledOrders.forEach((o) => {
         const name = o.productName || '(Tanpa Nama)';
         const entry = productMap.get(name) || { productName: name, omset: 0, qty: 0 };
-        entry.omset += o.price || 0;
+        entry.omset += orderRealPrice(o);
         entry.qty += o.qty || 1;
         productMap.set(name, entry);
       });
@@ -1542,9 +1566,10 @@ function createApp() {
 
       res.json({
         cards: {
-          totalOmset, totalPesanan, avgOrderValue, cancellationRate,
+          totalOmset, totalOngkir, totalBiayaCod, totalPesanan, avgOrderValue, cancellationRate,
           activePreOrders, chatMasuk, closingCount, closingRate,
         },
+        omsetByStatus,
         revenueByDay,
         chatsByDay,
         ordersByProduct,

@@ -380,8 +380,24 @@ function populateDashboardProductPanel(products) {
   updateDashProductToggleLabel();
 }
 
+// Satu card omset per status pesanan - jumlah kartunya mengikuti status apa
+// saja yang ada di data (tidak hardcoded), karena status berasal dari kolom
+// "Status" bebas teks di file impor.
+function renderOmsetByStatusCards(omsetByStatus) {
+  el('statusOmsetStats').innerHTML = (omsetByStatus || [])
+    .map((s) => `
+      <div class="stat-card stat-status-omset">
+        <div class="stat-value">${escapeHtml(formatRupiah(s.omset))}</div>
+        <div class="stat-label">${escapeHtml(s.label)}</div>
+        <p class="hint">${escapeHtml(s.count)} pesanan</p>
+      </div>`)
+    .join('');
+}
+
 function renderDashboardCards(cards) {
   el('statOmset').textContent = formatRupiah(cards.totalOmset);
+  el('statTotalOngkir').textContent = formatRupiah(cards.totalOngkir);
+  el('statTotalBiayaCod').textContent = formatRupiah(cards.totalBiayaCod);
   el('statTotalPesanan').textContent = cards.totalPesanan;
   el('statAov').textContent = formatRupiah(cards.avgOrderValue);
   el('statCancelRate').textContent = `${cards.cancellationRate}%`;
@@ -451,6 +467,7 @@ async function renderDashboard() {
     populateDashboardProductPanel(stats.filterOptions.products);
     populateDashboardFilterSelect(el('dashFilterCreator'), stats.filterOptions.creators, 'Semua CS');
     renderDashboardCards(stats.cards);
+    renderOmsetByStatusCards(stats.omsetByStatus);
     renderDashboardCharts(stats);
   } catch (e) {
     handleApiError(e, 'Gagal memuat statistik dashboard.');
@@ -882,19 +899,37 @@ function renderOrdersTable() {
     const dateDisplay = order.createdDate
       ? new Date(order.createdDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
       : '-';
+    const receivedDateDisplay = order.receivedDate
+      ? new Date(order.receivedDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '-';
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><input type="checkbox" class="order-row-checkbox" data-id="${escapeHtml(order.id)}" ${selectedOrderIds.has(order.id) ? 'checked' : ''} /></td>
       <td data-col="noOrder">${escapeHtml(order.id)}</td>
-      <td data-col="tanggal">${escapeHtml(dateDisplay)}</td>
+      <td data-col="shippingType">${escapeHtml(order.shippingType || '-')}</td>
+      <td data-col="courier">${escapeHtml(order.courier || '-')}</td>
       <td data-col="penerima">${escapeHtml(order.customerName || '-')}</td>
       <td data-col="noHp">${escapeHtml(order.customerPhone || '-')}</td>
+      <td data-col="alamat">${escapeHtml(order.address || '-')}</td>
+      <td data-col="kota">${escapeHtml(order.city || '-')}</td>
       <td data-col="produk">${escapeHtml(order.productName || '-')}</td>
+      <td data-col="berat">${escapeHtml(order.weight ?? '-')}</td>
       <td data-col="jumlah">${escapeHtml(order.qty ?? '-')}</td>
-      <td data-col="harga">${escapeHtml(formatRupiah(order.price))}</td>
-      <td data-col="akunWa">${escapeHtml(order.ownerNumber || '-')}</td>
+      <td data-col="volume">${escapeHtml(order.volume || '-')}</td>
+      <td data-col="ongkosKirim">${escapeHtml(formatRupiah(order.shippingCost))}</td>
+      <td data-col="biayaCod">${escapeHtml(formatRupiah(order.codFee))}</td>
+      <td data-col="harga">${escapeHtml(formatRupiah((order.codValue || 0) - (order.shippingCost || 0)))}</td>
+      <td data-col="nilaiCod">${escapeHtml(formatRupiah(order.codValue))}</td>
       <td data-col="status">${escapeHtml(order.status || '-')}</td>
       <td data-col="resi">${escapeHtml(order.trackingNumber || '-')}</td>
+      <td data-col="tanggal">${escapeHtml(dateDisplay)}</td>
+      <td data-col="tanggalDiterima">${escapeHtml(receivedDateDisplay)}</td>
+      <td data-col="catatan">${escapeHtml(order.note || '-')}</td>
+      <td data-col="kodeReferensi">${escapeHtml(order.refCode || '-')}</td>
+      <td data-col="statusRekon">${escapeHtml(order.reconciliationStatus || '-')}</td>
+      <td data-col="namaAdminGudang">${escapeHtml(order.warehouseAdminName || '-')}</td>
+      <td data-col="akunWa">${escapeHtml(order.ownerNumber || '-')}</td>
+      <td data-col="zipcode">${escapeHtml(order.zipcode || '-')}</td>
       <td>
         <button class="edit-product-btn edit-order-btn" data-id="${escapeHtml(order.id)}">Edit</button>
         <button class="delete-product-btn delete-order-btn" data-id="${escapeHtml(order.id)}">Hapus</button>

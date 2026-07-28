@@ -377,7 +377,9 @@ body {
 /* ---------- Stat cards ---------- */
 .stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  /* Fixed at 5 columns (not auto-fit) so a wide screen can't ever pack more
+     than 5 cards into one row - extra cards wrap to the next row instead. */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -406,6 +408,13 @@ body {
 .stat-aov .stat-icon { background: #fdeecb; color: #946200; }
 .stat-cancel .stat-icon { background: var(--danger-tint); color: var(--danger); }
 .stat-preorder .stat-icon { background: #e8f0fe; color: #2e6fdb; }
+.stat-ongkir .stat-icon { background: #fdeecb; color: #946200; }
+.stat-codfee .stat-icon { background: var(--danger-tint); color: var(--danger); }
+.stat-card .hint { margin-top: 8px; }
+
+.stats-substatus-heading { font-size: 15px; margin: 0 0 10px; }
+.stats-status-omset { margin-bottom: 16px; }
+.stat-status-omset { background: #e6f6f3; border-color: #bfe6de; }
 .stat-value { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
 .stat-label { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; }
 
@@ -787,6 +796,10 @@ tbody tr:hover { background: #fafcfb; }
 .delete-user-btn:hover { background: var(--danger-tint); }
 
 /* ---------- Responsive ---------- */
+@media (max-width: 1180px) and (min-width: 761px) {
+  .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 @media (max-width: 760px) {
   .app-shell { flex-direction: column; }
   .sidebar {
