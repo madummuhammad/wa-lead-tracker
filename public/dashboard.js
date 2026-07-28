@@ -902,6 +902,12 @@ function renderOrdersTable() {
     const receivedDateDisplay = order.receivedDate
       ? new Date(order.receivedDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
       : '-';
+    const returnDateDisplay = order.returnDate
+      ? new Date(order.returnDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '-';
+    const returnToSellerDateDisplay = order.returnToSellerDate
+      ? new Date(order.returnToSellerDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '-';
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><input type="checkbox" class="order-row-checkbox" data-id="${escapeHtml(order.id)}" ${selectedOrderIds.has(order.id) ? 'checked' : ''} /></td>
@@ -917,6 +923,7 @@ function renderOrdersTable() {
       <td data-col="jumlah">${escapeHtml(order.qty ?? '-')}</td>
       <td data-col="volume">${escapeHtml(order.volume || '-')}</td>
       <td data-col="ongkosKirim">${escapeHtml(formatRupiah(order.shippingCost))}</td>
+      <td data-col="diskonCod">${escapeHtml(formatRupiah(order.codDiscount))}</td>
       <td data-col="biayaCod">${escapeHtml(formatRupiah(order.codFee))}</td>
       <td data-col="harga">${escapeHtml(formatRupiah((order.codValue || 0) - (order.shippingCost || 0)))}</td>
       <td data-col="nilaiCod">${escapeHtml(formatRupiah(order.codValue))}</td>
@@ -930,6 +937,22 @@ function renderOrdersTable() {
       <td data-col="namaAdminGudang">${escapeHtml(order.warehouseAdminName || '-')}</td>
       <td data-col="akunWa">${escapeHtml(order.ownerNumber || '-')}</td>
       <td data-col="zipcode">${escapeHtml(order.zipcode || '-')}</td>
+      <td data-col="kotaKabupaten">${escapeHtml(order.regency || '-')}</td>
+      <td data-col="returnDate">${escapeHtml(returnDateDisplay)}</td>
+      <td data-col="problem">${escapeHtml(order.problem || '-')}</td>
+      <td data-col="variant">${escapeHtml(order.variant || '-')}</td>
+      <td data-col="senderDistrict">${escapeHtml(order.senderDistrict || '-')}</td>
+      <td data-col="senderProvince">${escapeHtml(order.senderProvince || '-')}</td>
+      <td data-col="pickupType">${escapeHtml(order.pickupType || '-')}</td>
+      <td data-col="pickupTime">${escapeHtml(order.pickupTime || '-')}</td>
+      <td data-col="insurance">${escapeHtml(order.insurance || '-')}</td>
+      <td data-col="senderRegency">${escapeHtml(order.senderRegency || '-')}</td>
+      <td data-col="senderAddress">${escapeHtml(order.senderAddress || '-')}</td>
+      <td data-col="csName">${escapeHtml(order.csName || '-')}</td>
+      <td data-col="returnToSellerDate">${escapeHtml(returnToSellerDateDisplay)}</td>
+      <td data-col="originalShippingCost">${escapeHtml(formatRupiah(order.originalShippingCost))}</td>
+      <td data-col="district">${escapeHtml(order.district || '-')}</td>
+      <td data-col="province">${escapeHtml(order.province || '-')}</td>
       <td>
         <button class="edit-product-btn edit-order-btn" data-id="${escapeHtml(order.id)}">Edit</button>
         <button class="delete-product-btn delete-order-btn" data-id="${escapeHtml(order.id)}">Hapus</button>
@@ -1008,20 +1031,24 @@ async function loadOrders() {
 let editingOrderId = null;
 
 // [form element id, Order field name] - covers every plain text/number field.
-// createdDate/receivedDate (dates) and productName (own select + price
-// autofill) are handled separately below.
+// createdDate/receivedDate/returnDate/returnToSellerDate (dates) and
+// productName (own select + price autofill) are handled separately below.
 const ORDER_FORM_TEXT_FIELDS = [
   ['orderCustomerName', 'customerName'],
   ['orderCustomerPhone', 'customerPhone'],
   ['orderAddress', 'address'],
   ['orderCity', 'city'],
   ['orderZipcode', 'zipcode'],
+  ['orderRegency', 'regency'],
+  ['orderDistrict', 'district'],
+  ['orderProvince', 'province'],
   ['orderShippingType', 'shippingType'],
   ['orderCourier', 'courier'],
   ['orderOwnerNumber', 'ownerNumber'],
   ['orderQty', 'qty'],
   ['orderWeight', 'weight'],
   ['orderVolume', 'volume'],
+  ['orderVariant', 'variant'],
   ['orderPrice', 'price'],
   ['orderShippingCost', 'shippingCost'],
   ['orderCodDiscount', 'codDiscount'],
@@ -1032,6 +1059,16 @@ const ORDER_FORM_TEXT_FIELDS = [
   ['orderRefCode', 'refCode'],
   ['orderReconciliationStatus', 'reconciliationStatus'],
   ['orderWarehouseAdminName', 'warehouseAdminName'],
+  ['orderProblem', 'problem'],
+  ['orderPickupType', 'pickupType'],
+  ['orderPickupTime', 'pickupTime'],
+  ['orderInsurance', 'insurance'],
+  ['orderOriginalShippingCost', 'originalShippingCost'],
+  ['orderCsName', 'csName'],
+  ['orderSenderDistrict', 'senderDistrict'],
+  ['orderSenderRegency', 'senderRegency'],
+  ['orderSenderProvince', 'senderProvince'],
+  ['orderSenderAddress', 'senderAddress'],
   ['orderNote', 'note'],
 ];
 
@@ -1061,6 +1098,8 @@ function readOrderForm() {
   body.productName = el('orderProductName').value;
   body.createdDate = el('orderCreatedDate').value || undefined;
   body.receivedDate = el('orderReceivedDate').value || undefined;
+  body.returnDate = el('orderReturnDate').value || undefined;
+  body.returnToSellerDate = el('orderReturnToSellerDate').value || undefined;
   return body;
 }
 
@@ -1068,12 +1107,16 @@ function fillOrderForm(order) {
   ORDER_FORM_TEXT_FIELDS.forEach(([elId, key]) => { el(elId).value = order[key] ?? ''; });
   el('orderCreatedDate').value = order.createdDate ? new Date(order.createdDate).toISOString().slice(0, 10) : '';
   el('orderReceivedDate').value = order.receivedDate ? new Date(order.receivedDate).toISOString().slice(0, 10) : '';
+  el('orderReturnDate').value = order.returnDate ? new Date(order.returnDate).toISOString().slice(0, 10) : '';
+  el('orderReturnToSellerDate').value = order.returnToSellerDate ? new Date(order.returnToSellerDate).toISOString().slice(0, 10) : '';
 }
 
 function resetOrderForm() {
   ORDER_FORM_TEXT_FIELDS.forEach(([elId]) => { el(elId).value = ''; });
   el('orderCreatedDate').value = '';
   el('orderReceivedDate').value = '';
+  el('orderReturnDate').value = '';
+  el('orderReturnToSellerDate').value = '';
   editingOrderId = null;
   el('orderFormMsg').textContent = '';
   el('orderNumberDisplay').textContent = '';

@@ -442,6 +442,7 @@
                 <th data-col="jumlah">Jumlah</th>
                 <th data-col="volume">Volume</th>
                 <th data-col="ongkosKirim">Ongkos Kirim</th>
+                <th data-col="diskonCod">Diskon COD</th>
                 <th data-col="biayaCod">Biaya COD</th>
                 <th data-col="harga">Harga</th>
                 <th data-col="nilaiCod">Nilai COD</th>
@@ -455,6 +456,22 @@
                 <th data-col="namaAdminGudang">Nama Admin Gudang</th>
                 <th data-col="akunWa">Akun WA</th>
                 <th data-col="zipcode">Zipcode</th>
+                <th data-col="kotaKabupaten">Kota/Kabupaten</th>
+                <th data-col="returnDate">Tanggal Return</th>
+                <th data-col="problem">Problem</th>
+                <th data-col="variant">Variasi</th>
+                <th data-col="senderDistrict">Kecamatan Pengirim</th>
+                <th data-col="senderProvince">Provinsi Pengirim</th>
+                <th data-col="pickupType">Tipe Pickup</th>
+                <th data-col="pickupTime">Waktu Pickup</th>
+                <th data-col="insurance">Asuransi</th>
+                <th data-col="senderRegency">Kota/Kabupaten Pengirim</th>
+                <th data-col="senderAddress">Alamat Pengirim</th>
+                <th data-col="csName">Nama CS</th>
+                <th data-col="returnToSellerDate">Tanggal Return Ke Seller</th>
+                <th data-col="originalShippingCost">Ongkos Kirim Asli</th>
+                <th data-col="district">Kecamatan</th>
+                <th data-col="province">Provinsi</th>
                 <th></th>
               </tr>
             </thead>
@@ -511,6 +528,18 @@
                   <input type="text" id="orderZipcode" />
                 </label>
                 <label class="form-field">
+                  <span>Kota/Kabupaten</span>
+                  <input type="text" id="orderRegency" />
+                </label>
+                <label class="form-field">
+                  <span>Kecamatan</span>
+                  <input type="text" id="orderDistrict" />
+                </label>
+                <label class="form-field">
+                  <span>Provinsi</span>
+                  <input type="text" id="orderProvince" />
+                </label>
+                <label class="form-field">
                   <span>Pengiriman</span>
                   <input type="text" id="orderShippingType" />
                 </label>
@@ -543,6 +572,10 @@
                 <label class="form-field">
                   <span>Volume</span>
                   <input type="text" id="orderVolume" />
+                </label>
+                <label class="form-field">
+                  <span>Variasi</span>
+                  <input type="text" id="orderVariant" />
                 </label>
                 <label class="form-field">
                   <span>Harga Produk</span>
@@ -597,6 +630,66 @@
                 <label class="form-field">
                   <span>Nama Admin Gudang</span>
                   <input type="text" id="orderWarehouseAdminName" />
+                </label>
+                <label class="form-field">
+                  <span>Problem</span>
+                  <input type="text" id="orderProblem" />
+                </label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3 class="form-section-title">Pickup &amp; Return</h3>
+              <div class="form-grid">
+                <label class="form-field">
+                  <span>Tipe Pickup</span>
+                  <input type="text" id="orderPickupType" />
+                </label>
+                <label class="form-field">
+                  <span>Waktu Pickup</span>
+                  <input type="text" id="orderPickupTime" />
+                </label>
+                <label class="form-field">
+                  <span>Asuransi</span>
+                  <input type="text" id="orderInsurance" />
+                </label>
+                <label class="form-field">
+                  <span>Ongkos Kirim Asli</span>
+                  <input type="number" id="orderOriginalShippingCost" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>Tanggal Return</span>
+                  <input type="date" id="orderReturnDate" />
+                </label>
+                <label class="form-field">
+                  <span>Tanggal Return Ke Seller</span>
+                  <input type="date" id="orderReturnToSellerDate" />
+                </label>
+                <label class="form-field">
+                  <span>Nama CS</span>
+                  <input type="text" id="orderCsName" />
+                </label>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3 class="form-section-title">Data Pengirim</h3>
+              <div class="form-grid">
+                <label class="form-field">
+                  <span>Kecamatan Pengirim</span>
+                  <input type="text" id="orderSenderDistrict" />
+                </label>
+                <label class="form-field">
+                  <span>Kota/Kabupaten Pengirim</span>
+                  <input type="text" id="orderSenderRegency" />
+                </label>
+                <label class="form-field">
+                  <span>Provinsi Pengirim</span>
+                  <input type="text" id="orderSenderProvince" />
+                </label>
+                <label class="form-field form-field-wide">
+                  <span>Alamat Pengirim</span>
+                  <input type="text" id="orderSenderAddress" />
                 </label>
               </div>
             </div>

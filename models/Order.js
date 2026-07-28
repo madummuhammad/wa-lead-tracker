@@ -33,6 +33,22 @@ const orderSchema = new mongoose.Schema(
     warehouseAdminName: String, // Nama Admin Gudang
     ownerNumber: String, // Nomor Admin Gudang, normalized to match Chat.ownerNumber format
     zipcode: String,
+    regency: String, // Kota/Kabupaten (penerima)
+    district: String, // Kecamatan (penerima)
+    province: String, // Provinsi (penerima)
+    variant: String, // Variasi
+    problem: String, // Problem
+    returnDate: Date, // Tanggal Return
+    returnToSellerDate: Date, // Tanggal Return Ke Seller
+    csName: String, // Nama CS
+    pickupType: String, // Tipe Pickup
+    pickupTime: String, // Waktu Pickup - format sumbernya "YYYY-MM-DD HH:mm", disimpan apa adanya
+    insurance: String, // Asuransi
+    originalShippingCost: Number, // Ongkos Kirim Asli
+    senderDistrict: String, // Kecamatan Pengirim
+    senderRegency: String, // Kota/Kabupaten Pengirim
+    senderProvince: String, // Provinsi Pengirim
+    senderAddress: String, // Alamat Pengirim
   },
   { timestamps: true, _id: false }
 );
