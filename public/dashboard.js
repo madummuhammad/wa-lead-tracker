@@ -1972,11 +1972,16 @@ function switchPage(page) {
   if (page === 'dashboard') renderDashboard();
   if (page === 'produk') loadProducts();
   if (page === 'pesanan') loadOrders();
-  // loadProducts() first, not just loadPreOrders() - the table's Produk
-  // column needs the catalog already loaded to show the "SKU-Nama Produk"
-  // label (see formatProductLabelWithSku), so it has to resolve before
-  // loadPreOrders() renders the table, not just run alongside it.
-  if (page === 'praPesanan') loadProducts().then(loadPreOrders);
+  // loadProducts() AND loadData() first, not just loadPreOrders() - the
+  // table needs both already loaded before it renders: the catalog for the
+  // "SKU-Nama Produk" label (formatProductLabelWithSku), and allChats for
+  // the Status Kabar/Akun WA columns (preOrderNotifyStatus/
+  // preOrderOwnerNumber). Without this, allChats can still be its startup
+  // default ({}) if this page is opened before showAppScreen()'s own
+  // loadData() call has resolved, so every row falls back to "Belum
+  // Dikabari" until a full page reload happens to re-trigger loadData()
+  // before the click - which is why refreshing "fixed" it.
+  if (page === 'praPesanan') Promise.all([loadProducts(), loadData()]).then(loadPreOrders);
   if (page === 'templates') loadTemplates();
   if (page === 'users') loadUsers();
 }
