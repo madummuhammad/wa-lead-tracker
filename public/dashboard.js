@@ -1,5 +1,31 @@
 const TOKEN_STORAGE = 'waLeadToken';
 
+// "Tampilkan" (rows per page) picker - remembered per table across reloads,
+// same browser-localStorage pattern as waLeadHiddenColumns (Kolom toggle).
+// Kontak has no picker (KONTAK_PAGE_SIZE is a fixed constant), so only the
+// two tables that actually have one (Pesanan, Pra-Pesanan) need this.
+const PAGE_SIZE_STORAGE = 'waLeadPageSize';
+
+function loadStoredPageSize(key, fallback) {
+  try {
+    const store = JSON.parse(localStorage.getItem(PAGE_SIZE_STORAGE) || '{}');
+    return Number(store[key]) || fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function savePageSize(key, value) {
+  let store = {};
+  try {
+    store = JSON.parse(localStorage.getItem(PAGE_SIZE_STORAGE) || '{}');
+  } catch (e) {
+    store = {};
+  }
+  store[key] = value;
+  localStorage.setItem(PAGE_SIZE_STORAGE, JSON.stringify(store));
+}
+
 let token = null;
 let currentUser = null; // { email, role, userId }
 let allChats = {};
@@ -10,10 +36,10 @@ let editingProductId = null;
 const KONTAK_PAGE_SIZE = 10;
 let kontakPage = 1;
 let allOrders = [];
-let ordersPageSize = 10;
+let ordersPageSize = loadStoredPageSize('orders', 10);
 let ordersPage = 1;
 let allPreOrders = [];
-let preOrdersPageSize = 10;
+let preOrdersPageSize = loadStoredPageSize('preOrders', 10);
 let preOrdersPage = 1;
 let selectedOrderIds = new Set();
 let selectedPreOrderIds = new Set();
@@ -2141,8 +2167,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     ordersPage += 1;
     renderOrdersTable();
   });
+  el('ordersPageSize').value = ordersPageSize;
   el('ordersPageSize').addEventListener('change', () => {
     ordersPageSize = Number(el('ordersPageSize').value) || 10;
+    savePageSize('orders', ordersPageSize);
     ordersPage = 1;
     renderOrdersTable();
   });
@@ -2183,8 +2211,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     preOrdersPage += 1;
     renderPreOrdersTable();
   });
+  el('preOrdersPageSize').value = preOrdersPageSize;
   el('preOrdersPageSize').addEventListener('change', () => {
     preOrdersPageSize = Number(el('preOrdersPageSize').value) || 10;
+    savePageSize('preOrders', preOrdersPageSize);
     preOrdersPage = 1;
     renderPreOrdersTable();
   });
