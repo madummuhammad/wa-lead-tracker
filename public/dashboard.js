@@ -1960,6 +1960,17 @@ async function deleteUser(id) {
 
 // ---- Sidebar navigation ----
 
+// Shared by switchPage's praPesanan branch and the "Muat Ulang" button -
+// loadPreOrders() alone leaves allProducts/allChats as whatever they were
+// last set to, which is stale/possibly empty ({}) the first time this page
+// is reached and was the cause of Status Kabar/Akun WA/SKU showing wrong
+// values until a full page reload. Both entry points need the same fix, not
+// just page navigation, since a stale render can just as easily be sitting
+// there when the admin clicks refresh.
+function reloadPreOrdersPageData() {
+  return Promise.all([loadProducts(), loadData()]).then(loadPreOrders);
+}
+
 function switchPage(page) {
   document.querySelectorAll('.nav-link').forEach((btn) => btn.classList.toggle('active', btn.dataset.page === page));
   el('dashboardPage').classList.toggle('hidden', page !== 'dashboard');
@@ -1972,16 +1983,7 @@ function switchPage(page) {
   if (page === 'dashboard') renderDashboard();
   if (page === 'produk') loadProducts();
   if (page === 'pesanan') loadOrders();
-  // loadProducts() AND loadData() first, not just loadPreOrders() - the
-  // table needs both already loaded before it renders: the catalog for the
-  // "SKU-Nama Produk" label (formatProductLabelWithSku), and allChats for
-  // the Status Kabar/Akun WA columns (preOrderNotifyStatus/
-  // preOrderOwnerNumber). Without this, allChats can still be its startup
-  // default ({}) if this page is opened before showAppScreen()'s own
-  // loadData() call has resolved, so every row falls back to "Belum
-  // Dikabari" until a full page reload happens to re-trigger loadData()
-  // before the click - which is why refreshing "fixed" it.
-  if (page === 'praPesanan') Promise.all([loadProducts(), loadData()]).then(loadPreOrders);
+  if (page === 'praPesanan') reloadPreOrdersPageData();
   if (page === 'templates') loadTemplates();
   if (page === 'users') loadUsers();
 }
@@ -2110,7 +2112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     ordersPage = 1;
     renderOrdersTable();
   });
-  el('preOrdersRefreshBtn').addEventListener('click', loadPreOrders);
+  el('preOrdersRefreshBtn').addEventListener('click', reloadPreOrdersPageData);
   ['preOrderFilterCreator', 'preOrderFilterOwner', 'preOrderFilterFrom', 'preOrderFilterTo', 'preOrderFilterNotifyStatus', 'preOrderFilterResponseStatus'].forEach((id) => {
     el(id).addEventListener('input', () => {
       preOrdersPage = 1;
