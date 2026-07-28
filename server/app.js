@@ -672,9 +672,33 @@ function createApp() {
 
       let availablePreOrders = await PreOrder.find({ convertedOrderId: { $exists: false } }).lean();
       const productCache = new Map(); // raw name -> {productId, productName} | null (unresolved)
-      const chatCache = new Map(); // phone -> chat doc
       const unresolvedProducts = new Set();
       const preOrderConversionOps = [];
+      // Order/Chat writes are queued here and sent as a couple of bulkWrite
+      // calls after the loop, instead of one await per row (an earlier
+      // version did `await Order.findByIdAndUpdate(...)` etc. for every
+      // single row) - for a real-size file that's easily 100+ sequential
+      // MongoDB round trips, slow enough to blow past the Netlify function's
+      // execution time limit and get killed mid-request, which surfaces to
+      // the browser as a bare "502 Bad Gateway" with no useful error message.
+      const orderBulkOps = [];
+      const chatBulkOps = [];
+
+      // Chats are looked up by phone constantly below - batch-fetch every
+      // phone this file references in one query up front (keyed in
+      // `chatCache`) instead of one Chat.findById per row, same reasoning as
+      // the bulk writes above.
+      const allPhones = new Set();
+      for (let r = 2; r <= worksheet.rowCount; r++) {
+        const row = worksheet.getRow(r);
+        if (!String(getCell(row, 'No. Order') || '').trim()) continue;
+        const phone = onlyDigits(getCell(row, 'No. HP Penerima'));
+        if (phone) allPhones.add(phone);
+      }
+      const existingChats = allPhones.size > 0
+        ? await Chat.find({ _id: { $in: Array.from(allPhones) } }).lean()
+        : [];
+      const chatCache = new Map(existingChats.map((c) => [c._id, c])); // phone -> chat doc (plain object, not a live Mongoose doc)
 
       let ordersImported = 0;
       let contactsCreated = 0;
@@ -740,73 +764,81 @@ function createApp() {
         if (dryRun) continue; // preview only - no writes below this point
 
         // Match the contact by phone number, creating it if this is a buyer
-        // we haven't seen before (e.g. never scanned from WA Web).
+        // we haven't seen before (e.g. never scanned from WA Web). Queued
+        // into chatBulkOps below instead of writing immediately - see the
+        // comment above chatCache's declaration.
         let chat = chatCache.get(customerPhone);
         if (chat === undefined) {
-          chat = await Chat.findById(customerPhone);
-          if (!chat) {
-            chat = await Chat.create({
-              _id: customerPhone,
-              name: customerName,
-              phone: customerPhone,
-              ownerNumber: ownerNumber || undefined,
-              firstMessageDate: createdDate ? createdDate.toISOString() : undefined,
-              firstSeenAt: new Date().toISOString(),
-              manualClosing: status !== 'Dibatalkan',
-              manualClosingUpdatedAt: new Date().toISOString(),
-            });
-            contactsCreated++;
-          } else if (status !== 'Dibatalkan' && chat.manualClosing !== true) {
-            // A real order is a conversion regardless of shipping status -
-            // only a cancelled order shouldn't flip an existing contact.
-            chat.manualClosing = true;
-            chat.manualClosingUpdatedAt = new Date().toISOString();
-            await chat.save();
-          }
-          chatCache.set(customerPhone, chat);
+          const newChat = {
+            _id: customerPhone,
+            name: customerName,
+            phone: customerPhone,
+            ownerNumber: ownerNumber || undefined,
+            firstMessageDate: createdDate ? createdDate.toISOString() : undefined,
+            firstSeenAt: new Date().toISOString(),
+            manualClosing: status !== 'Dibatalkan',
+            manualClosingUpdatedAt: new Date().toISOString(),
+          };
+          chatBulkOps.push({ updateOne: { filter: { _id: customerPhone }, update: { $set: newChat }, upsert: true } });
+          contactsCreated++;
+          chatCache.set(customerPhone, newChat);
+          chat = newChat;
+        } else if (status !== 'Dibatalkan' && chat.manualClosing !== true) {
+          // A real order is a conversion regardless of shipping status - only
+          // a cancelled order shouldn't flip an existing contact.
+          chat.manualClosing = true;
+          chat.manualClosingUpdatedAt = new Date().toISOString();
+          chatBulkOps.push({
+            updateOne: {
+              filter: { _id: customerPhone },
+              update: { $set: { manualClosing: true, manualClosingUpdatedAt: chat.manualClosingUpdatedAt } },
+            },
+          });
         }
 
         const volumeRaw = getCell(row, 'Volume');
         const zipcodeRaw = getCell(row, 'Zipcode');
 
-        await Order.findByIdAndUpdate(
-          noOrder,
-          {
-            $set: {
-              _id: noOrder,
-              shippingType: getCell(row, 'Pengiriman'),
-              courier: getCell(row, 'Kurir'),
-              customerName,
-              customerPhone,
-              address: getCell(row, 'Alamat'),
-              city: getCell(row, 'Kota penerima'),
-              productName: resolvedProduct.productName,
-              productId: resolvedProduct.productId,
-              weight: numOrUndefined(getCell(row, 'Berat')),
-              qty: numOrUndefined(getCell(row, 'Jumlah')),
-              volume: volumeRaw !== undefined ? String(volumeRaw) : undefined,
-              shippingCost: numOrUndefined(getCell(row, 'Ongkos Kirim')),
-              codDiscount: numOrUndefined(getCell(row, 'Diskon COD')),
-              codFee: numOrUndefined(getCell(row, 'Biaya COD')),
-              // "Harga Produk" is blank in every row of this export format -
-              // the real per-order price ends up in "Nilai COD" instead.
-              // Prefer "Harga Produk" when a future export does fill it in.
-              price: numOrUndefined(getCell(row, 'Harga Produk')) ?? numOrUndefined(getCell(row, 'Nilai COD')),
-              codValue: numOrUndefined(getCell(row, 'Nilai COD')),
-              status,
-              trackingNumber,
-              createdDate,
-              receivedDate: parseIndonesianDate(getCell(row, 'Tanggal Diterima')),
-              note: getCell(row, 'Catatan'),
+        orderBulkOps.push({
+          updateOne: {
+            filter: { _id: noOrder },
+            update: {
+              $set: {
+                _id: noOrder,
+                shippingType: getCell(row, 'Pengiriman'),
+                courier: getCell(row, 'Kurir'),
+                customerName,
+                customerPhone,
+                address: getCell(row, 'Alamat'),
+                city: getCell(row, 'Kota penerima'),
+                productName: resolvedProduct.productName,
+                productId: resolvedProduct.productId,
+                weight: numOrUndefined(getCell(row, 'Berat')),
+                qty: numOrUndefined(getCell(row, 'Jumlah')),
+                volume: volumeRaw !== undefined ? String(volumeRaw) : undefined,
+                shippingCost: numOrUndefined(getCell(row, 'Ongkos Kirim')),
+                codDiscount: numOrUndefined(getCell(row, 'Diskon COD')),
+                codFee: numOrUndefined(getCell(row, 'Biaya COD')),
+                // "Harga Produk" is blank in every row of this export format -
+                // the real per-order price ends up in "Nilai COD" instead.
+                // Prefer "Harga Produk" when a future export does fill it in.
+                price: numOrUndefined(getCell(row, 'Harga Produk')) ?? numOrUndefined(getCell(row, 'Nilai COD')),
+                codValue: numOrUndefined(getCell(row, 'Nilai COD')),
+                status,
+                trackingNumber,
+                createdDate,
+                receivedDate: parseIndonesianDate(getCell(row, 'Tanggal Diterima')),
+                note: getCell(row, 'Catatan'),
               refCode,
               reconciliationStatus: getCell(row, 'Status Rekonsiliasi'),
               warehouseAdminName: getCell(row, 'Nama Admin Gudang'),
-              ownerNumber,
-              zipcode: zipcodeRaw !== undefined ? String(zipcodeRaw) : undefined,
+                ownerNumber,
+                zipcode: zipcodeRaw !== undefined ? String(zipcodeRaw) : undefined,
+              },
             },
+            upsert: true,
           },
-          { upsert: true, new: true }
-        );
+        });
         ordersImported++;
 
         if (matchedPreOrder) {
@@ -829,6 +861,11 @@ function createApp() {
         return res.json({ dryRun: true, unresolvedProducts: Array.from(unresolvedProducts) });
       }
 
+      // The handful of DB round trips this import actually needs now - see
+      // the comment above chatBulkOps/orderBulkOps for why these are batched
+      // instead of one write per row.
+      if (chatBulkOps.length > 0) await Chat.bulkWrite(chatBulkOps);
+      if (orderBulkOps.length > 0) await Order.bulkWrite(orderBulkOps);
       if (preOrderConversionOps.length > 0) await PreOrder.bulkWrite(preOrderConversionOps);
       const preOrdersMoved = preOrderConversionOps.length;
 

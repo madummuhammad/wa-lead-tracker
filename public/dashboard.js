@@ -1088,18 +1088,50 @@ async function saveOrder() {
 // the admin to map each one to an existing catalog product before actually
 // committing anything. Returns the final commit result, or null if the
 // admin cancelled the mapping popup (nothing was imported in that case).
+// A real percentage isn't available - the server does the whole import in
+// one request/response, it doesn't stream progress - so this fakes one:
+// eases up towards 90% and stops there, since actually reaching 100% before
+// the response arrives would be a lie. Good enough to turn a blank "is this
+// stuck?" wait into something that visibly moves, which is what was actually
+// being asked for.
+function createFakeProgress(msgElId, initialLabel) {
+  let label = initialLabel;
+  let pct = 0;
+  const render = () => { el(msgElId).textContent = `${label} ${Math.round(pct)}%`; };
+  render();
+  const timer = setInterval(() => {
+    pct = Math.min(90, pct + (90 - pct) * 0.15 + 1);
+    render();
+  }, 200);
+  return {
+    setLabel(next) { label = next; render(); },
+    stop() { clearInterval(timer); },
+  };
+}
+
 async function importFileWithProductResolution(url, file, msgElId) {
-  el(msgElId).textContent = 'Memeriksa file...';
   const dryRunUrl = url + (url.includes('?') ? '&' : '?') + 'dryRun=true';
-  const preview = await apiUploadFile(dryRunUrl, file);
+  let preview;
+  let progress = createFakeProgress(msgElId, 'Memeriksa file...');
+  try {
+    preview = await apiUploadFile(dryRunUrl, file);
+  } finally {
+    progress.stop();
+  }
+
   let productMapping;
   if (preview.unresolvedProducts && preview.unresolvedProducts.length > 0) {
     await loadProducts();
     productMapping = await promptProductMapping(preview.unresolvedProducts);
     if (!productMapping) return null;
   }
-  el(msgElId).textContent = 'Mengimpor...';
-  return apiUploadFile(url, file, productMapping ? { productMapping: JSON.stringify(productMapping) } : undefined);
+
+  progress = createFakeProgress(msgElId, 'Mengimpor...');
+  try {
+    return await apiUploadFile(url, file, productMapping ? { productMapping: JSON.stringify(productMapping) } : undefined);
+  } finally {
+    progress.stop();
+  }
 }
 
 // Shows the shared "Pilih Produk" modal for raw product names (from an
