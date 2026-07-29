@@ -2310,17 +2310,19 @@ function renderAdCampaignMappingTable() {
   allAdCampaigns
     .slice()
     .sort((a, b) => (a.campaignName || '').localeCompare(b.campaignName || ''))
-    .forEach((c) => {
+    .forEach((c, index) => {
       const options = sortedProducts
         .map((p) => `<option value="${escapeHtml(p.id)}" ${p.id === c.productId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)
         .join('');
       const tr = document.createElement('tr');
       tr.innerHTML = `
+        <td>${index + 1}</td>
         <td>${escapeHtml(c.campaignName || '-')}</td>
         <td>${escapeHtml(c.campaignId)}</td>
         <td><select class="campaign-mapping-select" data-campaign-id="${escapeHtml(c.campaignId)}" data-campaign-name="${escapeHtml(c.campaignName || '')}">
           <option value="">Pilih Produk</option>${options}
         </select></td>
+        <td><button class="delete-product-btn delete-ad-campaign-btn" data-campaign-id="${escapeHtml(c.campaignId)}">Hapus</button></td>
       `;
       tbody.appendChild(tr);
     });
@@ -2328,6 +2330,23 @@ function renderAdCampaignMappingTable() {
   tbody.querySelectorAll('.campaign-mapping-select').forEach((select) => {
     select.addEventListener('change', () => saveAdCampaignMapping(select));
   });
+  tbody.querySelectorAll('.delete-ad-campaign-btn').forEach((btn) => {
+    btn.addEventListener('click', () => deleteAdCampaign(btn.dataset.campaignId));
+  });
+}
+
+// Removes a campaign entirely - the mapping AND every AdSpend row imported
+// for it (not just clearing the product link, which picking "Pilih Produk"
+// in the dropdown already does) - for getting rid of test/duplicate
+// campaigns cluttering the list instead of just leaving them unmapped.
+async function deleteAdCampaign(campaignId) {
+  if (!confirm('Hapus kampanye ini beserta semua data iklan harian yang sudah diimpor untuknya? Tindakan ini tidak bisa dibatalkan.')) return;
+  try {
+    await apiDelete(`/api/ads/campaigns/${campaignId}`);
+    await Promise.all([loadAdCampaigns(), loadAds()]);
+  } catch (e) {
+    handleApiError(e, 'Gagal menghapus kampanye.');
+  }
 }
 
 async function saveAdCampaignMapping(select) {
@@ -2482,6 +2501,81 @@ async function importAds() {
   }
 }
 
+// ---- Laporan (report page - Total Omset + Total Biaya Iklan, same filter
+// bar shape as Dashboard) ----
+
+const LAPORAN_PRODUCT_MULTISELECT = {
+  multi: 'laporanFilterProductMulti', toggle: 'laporanFilterProductToggle',
+  panel: 'laporanFilterProductPanel', all: 'laporanFilterProductAll',
+};
+
+// Guards the laporanFilterFrom/laporanFilterTo 'input' listener from
+// resetting laporanFilterQuickRange back to "Kustom" when this function is
+// the one writing those fields - same pattern as Dashboard's own
+// isApplyingDashQuickRange, just a separate flag since the two quick-range
+// pickers are independent controls.
+let isApplyingLaporanQuickRange = false;
+
+function applyLaporanQuickRange() {
+  const value = el('laporanFilterQuickRange').value;
+  if (value === 'custom') return;
+
+  const today = new Date();
+  let from = today;
+  let to = today;
+  if (value === 'yesterday') {
+    from = new Date(today);
+    from.setDate(from.getDate() - 1);
+    to = from;
+  } else if (value === 'last7') {
+    from = new Date(today);
+    from.setDate(from.getDate() - 6);
+  } else if (value === 'last30') {
+    from = new Date(today);
+    from.setDate(from.getDate() - 29);
+  }
+
+  isApplyingLaporanQuickRange = true;
+  el('laporanFilterFrom').value = formatDateInputValue(from);
+  el('laporanFilterTo').value = formatDateInputValue(to);
+  isApplyingLaporanQuickRange = false;
+  renderLaporan();
+}
+
+function renderLaporanCards(cards) {
+  el('statLaporanTotalOmset').textContent = formatRupiah(cards.totalOmset);
+  el('statLaporanTotalBiayaIklan').textContent = formatRupiah(cards.totalBiayaIklan);
+  el('statLaporanTotalHpp').textContent = formatRupiah(cards.totalHpp);
+  el('statLaporanTotalProfit').textContent = formatSignedRupiah(cards.totalProfit);
+  el('statLaporanRealizedProfit').textContent = formatSignedRupiah(cards.realizedProfit);
+}
+
+async function renderLaporan() {
+  el('laporanLoadingState').classList.remove('hidden');
+  try {
+    const params = new URLSearchParams();
+    const from = el('laporanFilterFrom').value;
+    const to = el('laporanFilterTo').value;
+    const owner = el('laporanFilterOwner').value;
+    const creator = el('laporanFilterCreator').value;
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (owner && owner !== 'all') params.set('ownerNumber', owner);
+    getMultiselectSelection('laporanProduct').forEach((p) => params.append('productName', p));
+    if (creator && creator !== 'all') params.set('createdByEmail', creator);
+
+    const stats = await apiGet(`/api/laporan/stats?${params.toString()}`);
+    populateDashboardFilterSelect(el('laporanFilterOwner'), stats.filterOptions.owners, 'Semua akun');
+    populateDashboardFilterSelect(el('laporanFilterCreator'), stats.filterOptions.creators, 'Semua CS');
+    renderMultiselectPanel('laporanProduct', LAPORAN_PRODUCT_MULTISELECT, stats.filterOptions.products);
+    renderLaporanCards(stats.cards);
+  } catch (e) {
+    handleApiError(e, 'Gagal memuat data laporan.');
+  } finally {
+    el('laporanLoadingState').classList.add('hidden');
+  }
+}
+
 // ---- User management (admin only) ----
 
 function renderUsersTable(users) {
@@ -2568,6 +2662,7 @@ function switchPage(page) {
   el('praPesananPage').classList.toggle('hidden', page !== 'praPesanan');
   el('templatesPage').classList.toggle('hidden', page !== 'templates');
   el('iklanPage').classList.toggle('hidden', page !== 'iklan');
+  el('laporanPage').classList.toggle('hidden', page !== 'laporan');
   el('usersPage').classList.toggle('hidden', page !== 'users');
   if (page === 'dashboard') renderDashboard();
   if (page === 'produk') loadProducts();
@@ -2575,6 +2670,7 @@ function switchPage(page) {
   if (page === 'praPesanan') reloadPreOrdersPageData();
   if (page === 'templates') loadTemplates();
   if (page === 'iklan') reloadAdsPageData();
+  if (page === 'laporan') renderLaporan();
   if (page === 'users') loadUsers();
 }
 
@@ -2791,6 +2887,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateAdsSelectionUi();
   });
   el('adsDeleteSelectedBtn').addEventListener('click', deleteSelectedAds);
+
+  el('laporanRefreshBtn').addEventListener('click', renderLaporan);
+  el('laporanFilterQuickRange').addEventListener('change', applyLaporanQuickRange);
+  ['laporanFilterOwner', 'laporanFilterCreator', 'laporanFilterFrom', 'laporanFilterTo'].forEach((id) => {
+    el(id).addEventListener('input', renderLaporan);
+  });
+  ['laporanFilterFrom', 'laporanFilterTo'].forEach((id) => {
+    el(id).addEventListener('input', () => {
+      if (!isApplyingLaporanQuickRange) el('laporanFilterQuickRange').value = 'custom';
+    });
+  });
+  wireMultiselect('laporanProduct', LAPORAN_PRODUCT_MULTISELECT, renderLaporan);
 
   el('preOrdersSelectAllCheckbox').addEventListener('change', () => {
     const checked = el('preOrdersSelectAllCheckbox').checked;

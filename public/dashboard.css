@@ -681,6 +681,22 @@ tbody tr:hover { background: #fafcfb; }
 }
 .delete-product-btn:hover { background: var(--danger-tint); }
 
+.campaign-mapping-select {
+  padding: 7px 9px;
+  border: 1px solid #d1d7db;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ink);
+  background: white;
+  min-width: 220px;
+  max-width: 100%;
+}
+#adCampaignMappingTable th:first-child, #adCampaignMappingTable td:first-child {
+  width: 1%;
+  color: var(--ink-soft);
+}
+
 .edit-product-name, .edit-product-price {
   padding: 6px 8px;
   border: 1px solid #d1d7db;

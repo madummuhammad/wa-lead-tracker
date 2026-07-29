@@ -46,6 +46,9 @@
         <button class="nav-link" data-page="iklan">
           <span class="nav-icon">📣</span> Iklan
         </button>
+        <button class="nav-link" data-page="laporan">
+          <span class="nav-icon">📊</span> Laporan
+        </button>
         <button class="nav-link hidden" id="usersNavBtn" data-page="users">
           <span class="nav-icon">⚙</span> Pengaturan User
         </button>
@@ -230,6 +233,83 @@
         </section>
 
         <div id="dashLoadingState" class="notice hidden">Memuat data dari MongoDB...</div>
+      </section>
+
+      <!-- ================= LAPORAN PAGE ================= -->
+      <section id="laporanPage" class="page hidden">
+        <header class="page-header">
+          <h1>Laporan</h1>
+          <button id="laporanRefreshBtn" class="btn-outline" title="Ambil data terbaru dari MongoDB">⟳ Muat Ulang</button>
+        </header>
+
+        <section class="filters compact">
+          <label>Rentang Cepat
+            <select id="laporanFilterQuickRange">
+              <option value="custom">Kustom</option>
+              <option value="today">Hari Ini</option>
+              <option value="yesterday">Kemarin</option>
+              <option value="last7">7 Hari Terakhir</option>
+              <option value="last30">30 Hari Terakhir</option>
+            </select>
+          </label>
+          <label>Dari
+            <input type="date" id="laporanFilterFrom" />
+          </label>
+          <label>Sampai
+            <input type="date" id="laporanFilterTo" />
+          </label>
+          <label>Akun WA
+            <select id="laporanFilterOwner">
+              <option value="all">Semua akun</option>
+            </select>
+          </label>
+          <label>Produk
+            <div class="multiselect" id="laporanFilterProductMulti">
+              <button type="button" class="multiselect-toggle" id="laporanFilterProductToggle">Semua produk</button>
+              <div class="multiselect-panel hidden" id="laporanFilterProductPanel"></div>
+            </div>
+          </label>
+          <label>CS
+            <select id="laporanFilterCreator">
+              <option value="all">Semua CS</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="stats">
+          <div class="stat-card stat-omset">
+            <div class="stat-icon">Rp</div>
+            <div class="stat-value" id="statLaporanTotalOmset">Rp 0</div>
+            <div class="stat-label">Total Omset</div>
+            <p class="hint">Rumus: Nilai COD − Ongkos Kirim − Biaya COD, dari pesanan yang tidak dibatalkan.</p>
+          </div>
+          <div class="stat-card stat-ongkir">
+            <div class="stat-icon">📣</div>
+            <div class="stat-value" id="statLaporanTotalBiayaIklan">Rp 0</div>
+            <div class="stat-label">Total Biaya Iklan</div>
+            <p class="hint">Akun WA dan CS tidak memfilter kartu ini - data iklan tidak tercatat per akun/CS.</p>
+          </div>
+          <div class="stat-card stat-codfee">
+            <div class="stat-icon">◈</div>
+            <div class="stat-value" id="statLaporanTotalHpp">Rp 0</div>
+            <div class="stat-label">Total HPP</div>
+            <p class="hint">HPP × Qty, dari pesanan yang tidak dibatalkan (termasuk Return - modalnya tetap keluar).</p>
+          </div>
+          <div class="stat-card stat-profit">
+            <div class="stat-icon">Δ</div>
+            <div class="stat-value" id="statLaporanTotalProfit">Rp 0</div>
+            <div class="stat-label">Profit</div>
+            <p class="hint">Omset − HPP − Biaya Iklan. Return dihitung rugi penuh (Ongkir + HPP, tanpa omset), Dibatalkan diabaikan.</p>
+          </div>
+          <div class="stat-card stat-realized-profit">
+            <div class="stat-icon">✓</div>
+            <div class="stat-value" id="statLaporanRealizedProfit">Rp 0</div>
+            <div class="stat-label">Profit Terealisasi</div>
+            <p class="hint">Cuma dari pesanan Diterima yang sudah rekonsiliasi (uang yang sudah pasti cair), dikurangi Biaya Iklan.</p>
+          </div>
+        </section>
+
+        <div id="laporanLoadingState" class="notice hidden">Memuat data dari MongoDB...</div>
       </section>
 
       <!-- ================= KONTAK PAGE ================= -->
@@ -1162,9 +1242,11 @@
             <table id="adCampaignMappingTable">
               <thead>
                 <tr>
+                  <th>No.</th>
                   <th>Nama Kampanye</th>
                   <th>ID Kampanye</th>
                   <th>Produk</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody id="adCampaignMappingTableBody"></tbody>

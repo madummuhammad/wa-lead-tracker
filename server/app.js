@@ -1610,6 +1610,23 @@ function createApp() {
     }
   });
 
+  // Removes a campaign entirely - the mapping AND every AdSpend row ever
+  // imported for it, not just the product link (PUT above, with no
+  // productId, only clears that). For getting rid of test/duplicate
+  // campaigns from the mapping panel instead of leaving them unmapped forever.
+  app.delete('/api/ads/campaigns/:campaignId', requireAuth, async (req, res) => {
+    try {
+      const campaignId = req.params.campaignId;
+      await Promise.all([
+        AdCampaignMapping.findByIdAndDelete(campaignId),
+        AdSpend.deleteMany({ campaignId }),
+      ]);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   // ---- Tracked phones (presence check for the extension's chat-list badge) ----
   // Just the distinct phones that have ANY Order or PreOrder record at all,
   // regardless of status/converted - unlike the filtered read-only mirrors
@@ -1670,6 +1687,120 @@ function createApp() {
   // ownerNumber only affects Chat/Order metrics (PreOrder has no owner
   // concept, it's tied to a CS creator instead); createdByEmail only
   // affects PreOrder metrics for the same reason.
+
+  // ---- Laporan (report page - Total Omset + Total Biaya Iklan side by
+  // side, same filter shape as Dashboard) ----
+  // Deliberately its own lightweight endpoint rather than reusing
+  // /api/dashboard/stats - that one aggregates Chat/Order/PreOrder for a
+  // dozen unrelated cards/charts; this page only needs two numbers plus the
+  // filter dropdown options, so it only fetches what those actually need.
+  app.get('/api/laporan/stats', requireAuth, async (req, res) => {
+    try {
+      const { from, to } = req.query;
+      const ownerNumber = req.query.ownerNumber && req.query.ownerNumber !== 'all' ? req.query.ownerNumber : null;
+      const productNames = (Array.isArray(req.query.productName) ? req.query.productName : req.query.productName ? [req.query.productName] : [])
+        .filter((p) => p && p !== 'all');
+      // createdByEmail (CS) is accepted for filter-bar consistency with
+      // Dashboard, but - same as there - Order has no CS/creator field, so
+      // it can't narrow Total Omset; and AdSpend has no CS concept either.
+      // Neither card in this report can honor it.
+
+      const fromTime = from ? new Date(`${from}T00:00:00`).getTime() : null;
+      const toTime = to ? new Date(`${to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000 - 1 : null;
+      const withinDateFilter = (dateValue) => {
+        if (fromTime === null && toTime === null) return true;
+        if (!dateValue) return false;
+        const t = new Date(dateValue).getTime();
+        if (fromTime !== null && t < fromTime) return false;
+        if (toTime !== null && t > toTime) return false;
+        return true;
+      };
+
+      const [chats, orders, preOrders, products, adSpends] = await Promise.all([
+        Chat.find({}).lean(),
+        Order.find({}).lean(),
+        PreOrder.find({}).lean(),
+        Product.find({}).lean(),
+        AdSpend.find({}).lean(),
+      ]);
+
+      const filteredOrders = orders.filter((o) =>
+        (!ownerNumber || (o.ownerNumber || '') === ownerNumber) &&
+        (productNames.length === 0 || productNames.includes(o.productName || '')) &&
+        withinDateFilter(o.createdDate)
+      );
+      // Same formula as the Dashboard/Pesanan Omset cards - Nilai COD minus
+      // Ongkos Kirim minus Biaya COD, excluding cancelled orders.
+      const orderRealPrice = (o) => (o.codValue || 0) - (o.shippingCost || 0) - (o.codFee || 0);
+      const totalOmset = filteredOrders
+        .filter((o) => o.status !== 'Dibatalkan')
+        .reduce((sum, o) => sum + orderRealPrice(o), 0);
+      // Same scope as Total Omset (every non-cancelled order, Return
+      // included - the cost of goods is real even for a returned item).
+      const totalHpp = filteredOrders
+        .filter((o) => o.status !== 'Dibatalkan')
+        .reduce((sum, o) => sum + (o.hpp || 0) * (o.qty || 1), 0);
+
+      // AdSpend has no ownerNumber of its own - only date and product (via
+      // the campaign->product mapping already stamped onto each row) apply.
+      const productIdsByName = new Set(
+        productNames.length > 0
+          ? products.filter((p) => productNames.includes(p.name)).map((p) => String(p._id))
+          : []
+      );
+      const filteredAdSpends = adSpends.filter((a) =>
+        (productNames.length === 0 || (a.productId && productIdsByName.has(String(a.productId)))) &&
+        withinDateFilter(a.date)
+      );
+      const totalBiayaIklan = filteredAdSpends.reduce((sum, a) => sum + (a.spend || 0), 0);
+
+      // Profit = Omset - HPP - Biaya Iklan, but NOT a naive
+      // totalOmset - totalHpp - totalBiayaIklan - that would overstate
+      // Return orders, whose Nilai COD totalOmset still counts even though
+      // the COD was never actually collected (the item came back). Same
+      // per-order rule as Dashboard's Total Profit: Return is a full loss
+      // (Ongkir + HPP, no omset at all), Dibatalkan is ignored entirely,
+      // everything else is orderRealPrice minus HPP x Qty - THEN ad spend
+      // is subtracted once on top, since it's a campaign-level cost, not
+      // a per-order one.
+      const profitFromOrders = filteredOrders.reduce((sum, o) => {
+        if (o.status === 'Dibatalkan') return sum;
+        const hppCost = (o.hpp || 0) * (o.qty || 1);
+        if (o.status === 'Return') return sum - ((o.shippingCost || 0) + hppCost);
+        return sum + (orderRealPrice(o) - hppCost);
+      }, 0);
+      const totalProfit = profitFromOrders - totalBiayaIklan;
+
+      // Profit Terealisasi - same definition as Dashboard's own realized
+      // profit card: only orders that are Diterima AND already
+      // rekonsiliasi (the only bucket that's confirmed money, not a
+      // projection) - then Biaya Iklan is subtracted here too, same as
+      // the all-orders Profit above, since ad spend already happened
+      // regardless of which orders have finished shipping yet.
+      const realizedProfitFromOrders = filteredOrders.reduce((sum, o) => {
+        if (o.status !== 'Diterima' || o.reconciliationStatus !== 'Sudah Rekonsiliasi') return sum;
+        const hppCost = (o.hpp || 0) * (o.qty || 1);
+        return sum + (orderRealPrice(o) - hppCost);
+      }, 0);
+      const realizedProfit = realizedProfitFromOrders - totalBiayaIklan;
+
+      // Same shape/source as Dashboard's own filterOptions, from the
+      // *unfiltered* data so the dropdowns always show every possibility.
+      const filterOptions = {
+        owners: Array.from(new Set(chats.map((c) => c.ownerNumber).filter(Boolean))).sort(),
+        products: Array.from(new Set([
+          ...chats.map((c) => c.product),
+          ...orders.map((o) => o.productName),
+          ...preOrders.map((p) => p.productName),
+        ].filter(Boolean))).sort(),
+        creators: Array.from(new Set(preOrders.map((p) => p.createdByEmail).filter(Boolean))).sort(),
+      };
+
+      res.json({ cards: { totalOmset, totalHpp, totalBiayaIklan, totalProfit, realizedProfit }, filterOptions });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
 
   app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
     try {
