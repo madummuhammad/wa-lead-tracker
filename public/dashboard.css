@@ -756,7 +756,12 @@ tbody tr:hover { background: #fafcfb; }
 }
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  /* minmax(0, 1fr), not bare 1fr - an item with unshrinkable content (e.g. a
+     <select> whose longest <option> text is wider than a third of the
+     modal) would otherwise force its whole column wider than its fair
+     share, blowing the grid past the modal's edge instead of just
+     truncating that one field's text. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px 16px;
 }
 .form-field {
@@ -826,5 +831,5 @@ tbody tr:hover { background: #fafcfb; }
   .whoami { display: none; }
   .main-content { padding: 18px; }
   .stats { grid-template-columns: 1fr; }
-  .form-grid { grid-template-columns: repeat(2, 1fr); }
+  .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
