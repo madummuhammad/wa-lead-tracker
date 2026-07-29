@@ -2677,6 +2677,10 @@ function renderLaporanProductBreakdownRows(productBreakdown) {
         <td>${formatRupiah(p.hpp)}</td>
         <td>${formatSignedRupiah(p.profit)}</td>
         <td>${formatSignedRupiah(p.realizedProfit)}</td>
+        <td>${formatRupiah(p.omsetDiterima)}</td>
+        <td>${formatRupiah(p.omsetReturn)}</td>
+        <td>${formatRupiah(p.biayaRetur)}</td>
+        <td>${formatRupiah(p.potensiRTS)}</td>
       </tr>`)
     .join('');
   el('laporanProductBreakdownEmptyState').classList.toggle('hidden', all.length > 0);
@@ -2694,6 +2698,8 @@ function renderLaporanProvinceReturnRows(returnRateByProvince) {
         <td>${escapeHtml(p.total)}</td>
         <td>${escapeHtml(p.returnCount)}</td>
         <td>${escapeHtml(p.rate)}%</td>
+        <td>${escapeHtml(p.problemCount)}</td>
+        <td>${escapeHtml(p.problemRate)}%</td>
       </tr>`)
     .join('');
   el('laporanProvinceReturnEmptyState').classList.toggle('hidden', all.length > 0);

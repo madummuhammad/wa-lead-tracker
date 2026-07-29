@@ -513,6 +513,24 @@ function createApp() {
     return chat ? chat.firstMessageDate : undefined;
   }
 
+  // Shared "sedang bermasalah" rule - used by the Dashboard/Laporan cards,
+  // the Pesanan page's own filter, and GET /api/orders?problematic=true
+  // (which the extension polls to badge WhatsApp chats with a currently
+  // problematic order). The source xlsx export fills every row's Problem
+  // cell with literally "-" when there's nothing wrong (not a blank cell),
+  // so a plain non-empty check would treat every single order as
+  // "problematic" - has to be excluded explicitly. "Sedang bermasalah" =
+  // catatan Problem terisi (bukan "-") DAN status belum final (bukan
+  // Diterima/Return/Dibatalkan) - begitu order itu resolve ke salah satu
+  // status final, paketnya sudah melewati apa pun yang memicu catatan itu,
+  // jadi tidak lagi dihitung sebagai masalah AKTIF walau catatan Problem-nya
+  // sendiri tetap tersimpan sebagai histori.
+  function isProblematicOrder(o) {
+    const problem = (o.problem || '').trim();
+    return problem !== '' && problem !== '-' &&
+      !['Diterima', 'Return', 'Dibatalkan'].includes(o.status);
+  }
+
   function numOrUndefined(value) {
     if (value === undefined || value === null || value === '') return undefined;
     const n = Number(value);
@@ -539,12 +557,22 @@ function createApp() {
   // the unfiltered response - the extension only reads a few fields off each
   // one - so this stays a plain filter on the existing route instead of a
   // separate endpoint.
+  // ?problematic=true narrows this down to the same "sedang bermasalah" set
+  // as isProblematicOrder() (Dashboard/Laporan/Pesanan) - used by the
+  // extension to badge WhatsApp chats whose phone has a currently
+  // problematic order. Expressed here as a Mongo-level filter (rather than
+  // fetching everything and filtering in JS) since both conditions are
+  // static field comparisons.
   app.get('/api/orders', requireAuth, async (req, res) => {
     try {
       const filter = {};
       if (req.query.notifyResi === 'true') {
         filter.status = { $nin: ['Dibatalkan', 'Diterima'] };
         filter.trackingNumber = { $nin: [null, ''] };
+      }
+      if (req.query.problematic === 'true') {
+        filter.problem = { $nin: [null, '', '-'] };
+        filter.status = { $nin: ['Diterima', 'Return', 'Dibatalkan'] };
       }
       const [docs, chats] = await Promise.all([
         Order.find(filter).sort({ createdDate: -1 }).lean(),
@@ -1925,16 +1953,17 @@ function createApp() {
       }, 0);
       const realizedProfit = realizedProfitFromOrders - totalBiayaIklan;
 
-      // ---- Per-provinsi return rate (Order.province - "Provinsi" penerima
-      // dari file impor Pesanan), dari filteredOrders yang sama (ikut filter
-      // owner/produk/tanggal di atas), jadi konsisten dengan card-card lain
-      // di halaman ini.
+      // ---- Per-provinsi return rate + problem rate (Order.province -
+      // "Provinsi" penerima dari file impor Pesanan), dari filteredOrders
+      // yang sama (ikut filter owner/produk/tanggal di atas), jadi konsisten
+      // dengan card-card lain di halaman ini.
       const provinceMap = new Map();
       filteredOrders.forEach((o) => {
         const province = o.province || '(Tidak Diketahui)';
-        const entry = provinceMap.get(province) || { province, count: 0, returnCount: 0 };
+        const entry = provinceMap.get(province) || { province, count: 0, returnCount: 0, problemCount: 0 };
         entry.count += 1;
         if (o.status === 'Return') entry.returnCount += 1;
+        if (isProblematicOrder(o)) entry.problemCount += 1;
         provinceMap.set(province, entry);
       });
       const returnRateByProvince = Array.from(provinceMap.values())
@@ -1943,6 +1972,8 @@ function createApp() {
           total: e.count,
           returnCount: e.returnCount,
           rate: e.count > 0 ? Math.round((e.returnCount / e.count) * 1000) / 10 : 0,
+          problemCount: e.problemCount,
+          problemRate: e.count > 0 ? Math.round((e.problemCount / e.count) * 1000) / 10 : 0,
         }))
         .sort((a, b) => b.rate - a.rate);
 
@@ -1955,11 +1986,13 @@ function createApp() {
       // row, same as it's excluded from the overall totalBiayaIklan whenever
       // a product filter is active).
       const productNameById = new Map(products.map((p) => [String(p._id), p.name]));
+
       const orderStatsByProduct = new Map();
       filteredOrders.forEach((o) => {
         const name = o.productName || '(Tanpa Produk)';
         const entry = orderStatsByProduct.get(name) || {
           totalPesanan: 0, omset: 0, hpp: 0, profitFromOrders: 0, realizedProfitFromOrders: 0,
+          omsetDiterima: 0, omsetReturn: 0, biayaRetur: 0, potensiRTS: 0,
         };
         entry.totalPesanan += 1;
         if (o.status !== 'Dibatalkan') {
@@ -1969,7 +2002,26 @@ function createApp() {
           entry.profitFromOrders += o.status === 'Return' ? -((o.shippingCost || 0) + hppCost) : (orderRealPrice(o) - hppCost);
           if (o.status === 'Diterima' && o.reconciliationStatus === 'Sudah Rekonsiliasi') {
             entry.realizedProfitFromOrders += orderRealPrice(o) - hppCost;
+            entry.omsetDiterima += orderRealPrice(o);
           }
+          if (o.status === 'Return') {
+            // Same shape as Omset for every other status (orderRealPrice,
+            // Return included) - see totalOmset above, which already counts
+            // Return orders the same way.
+            entry.omsetReturn += orderRealPrice(o);
+            // Same formula as the Dashboard's "Ongkir Return (Invoice)" card
+            // (ongkirReturnInvoice below) - the actual return-leg shipping
+            // invoice, using the real ongkirPulang from a Problem Tracking
+            // import when available, falling back to shippingCost (the
+            // outbound leg) as a same-rate estimate otherwise. Deliberately
+            // NOT the "Kerugian Return" (Ongkir + HPP) formula - that's a
+            // different card with a different question (total loss on the
+            // order) than this one (just the shipping invoice).
+            entry.biayaRetur += o.ongkirPulang ?? o.shippingCost ?? 0;
+          }
+        }
+        if (isProblematicOrder(o)) {
+          entry.potensiRTS += o.potensiRTS || 0;
         }
         orderStatsByProduct.set(name, entry);
       });
@@ -1988,6 +2040,7 @@ function createApp() {
         .map((name) => {
           const stats = orderStatsByProduct.get(name) || {
             totalPesanan: 0, omset: 0, hpp: 0, profitFromOrders: 0, realizedProfitFromOrders: 0,
+            omsetDiterima: 0, omsetReturn: 0, biayaRetur: 0, potensiRTS: 0,
           };
           const biayaIklan = adSpendByProduct.get(name) || 0;
           return {
@@ -1998,6 +2051,10 @@ function createApp() {
             hpp: stats.hpp,
             profit: stats.profitFromOrders - biayaIklan,
             realizedProfit: stats.realizedProfitFromOrders - biayaIklan,
+            omsetDiterima: stats.omsetDiterima,
+            omsetReturn: stats.omsetReturn,
+            biayaRetur: stats.biayaRetur,
+            potensiRTS: stats.potensiRTS,
           };
         })
         .sort((a, b) => b.omset - a.omset);
@@ -2110,23 +2167,8 @@ function createApp() {
 
       // ---- Paket bermasalah (Order.problem - catatan kendala dari kurir,
       // mis. "NOBODY AT HOME", "CONSIGNEE REFUSE TO PAY COD", diisi lewat
-      // impor xlsx Pesanan) ----
-      // The source export fills every row's Problem cell with literally "-"
-      // when there's nothing wrong (not a blank cell) - so a plain
-      // non-empty check treats every single order as "problematic". Has to
-      // be excluded here the same way the standalone read of the raw xlsx
-      // did earlier.
-      // "Sedang bermasalah" = catatan Problem terisi (bukan "-") DAN status
-      // belum final (bukan Diterima/Return/Dibatalkan) - begitu order itu
-      // resolve ke salah satu status final, paketnya sudah melewati apa pun
-      // yang memicu catatan itu, jadi tidak lagi dihitung sebagai masalah
-      // AKTIF walau catatan Problem-nya sendiri tetap tersimpan sebagai
-      // histori.
-      const problematicOrders = filteredOrders.filter((o) => {
-        const problem = (o.problem || '').trim();
-        return problem !== '' && problem !== '-' &&
-          !['Diterima', 'Return', 'Dibatalkan'].includes(o.status);
-      });
+      // impor xlsx Pesanan) ---- see isProblematicOrder() above for the rule.
+      const problematicOrders = filteredOrders.filter(isProblematicOrder);
       const problematicOrderCount = problematicOrders.length;
       const problematicOrderOmset = problematicOrders.reduce((sum, o) => sum + orderRealPrice(o), 0);
       // Only populated for orders that have gone through the separate
