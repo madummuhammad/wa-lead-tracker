@@ -411,6 +411,11 @@ body {
 .stat-ongkir .stat-icon { background: #fdeecb; color: #946200; }
 .stat-codfee .stat-icon { background: var(--danger-tint); color: var(--danger); }
 .stat-profit .stat-icon { background: var(--brand-tint); color: var(--brand); }
+.stat-gross-profit .stat-icon { background: #e8f0fe; color: #2e6fdb; }
+.stat-realized-profit .stat-icon { background: var(--brand-tint); color: var(--brand); }
+.stat-projected-profit .stat-icon { background: #fdeecb; color: #946200; }
+.stat-return-loss .stat-icon { background: var(--danger-tint); color: var(--danger); }
+.stat-return-loss .stat-value { color: var(--danger); }
 .stat-card .hint { margin-top: 8px; }
 
 .stats-substatus-heading { font-size: 15px; margin: 0 0 10px; }

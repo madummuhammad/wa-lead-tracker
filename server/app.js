@@ -1545,6 +1545,22 @@ function createApp() {
       const profitByStatus = Array.from(profitBuckets.values()).sort((a, b) => b.count - a.count);
       const totalProfit = profitByStatus.reduce((sum, s) => sum + s.profit, 0);
 
+      // The 4 profit categories discussed with the owner:
+      // - Profit Kotor (Gross): every status that isn't a Return loss,
+      //   whether the money's already in hand or still in transit.
+      // - Profit Terealisasi (Realized): Diterima only - the only bucket
+      //   that's actually confirmed money, not a projection.
+      // - Profit Berjalan (Projected/In-transit): everything gross minus
+      //   what's already realized - still "in flight", not yet final.
+      // - Kerugian Return (Loss): the Return bucket on its own, always <= 0.
+      // totalProfit above = grossProfit + returnLoss = realizedProfit +
+      // projectedProfit + returnLoss - same bottom line, three different cuts.
+      const findBucket = (label) => (profitByStatus.find((b) => b.label === label) || { profit: 0 }).profit;
+      const returnLoss = findBucket('Return');
+      const grossProfit = totalProfit - returnLoss;
+      const realizedProfit = findBucket('Diterima');
+      const projectedProfit = grossProfit - realizedProfit;
+
       const avgOrderValue = nonCancelledOrders.length > 0 ? Math.round(totalOmset / nonCancelledOrders.length) : 0;
       const cancellationRate = totalPesanan > 0 ? Math.round((cancelledCount / totalPesanan) * 1000) / 10 : 0;
 
@@ -1674,7 +1690,9 @@ function createApp() {
 
       res.json({
         cards: {
-          totalOmset, totalOngkir, totalBiayaCod, totalProfit, totalPesanan, avgOrderValue, cancellationRate,
+          totalOmset, totalOngkir, totalBiayaCod, totalProfit,
+          grossProfit, realizedProfit, projectedProfit, returnLoss,
+          totalPesanan, avgOrderValue, cancellationRate,
           activePreOrders, chatMasuk, closingCount, closingRate,
         },
         omsetByStatus,

@@ -419,6 +419,10 @@ function renderProfitByStatusCards(profitByStatus) {
 function renderDashboardCards(cards) {
   el('statOmset').textContent = formatRupiah(cards.totalOmset);
   el('statTotalProfit').textContent = formatSignedRupiah(cards.totalProfit);
+  el('statGrossProfit').textContent = formatSignedRupiah(cards.grossProfit);
+  el('statRealizedProfit').textContent = formatSignedRupiah(cards.realizedProfit);
+  el('statProjectedProfit').textContent = formatSignedRupiah(cards.projectedProfit);
+  el('statReturnLoss').textContent = formatSignedRupiah(cards.returnLoss);
   el('statTotalOngkir').textContent = formatRupiah(cards.totalOngkir);
   el('statTotalBiayaCod').textContent = formatRupiah(cards.totalBiayaCod);
   el('statTotalPesanan').textContent = cards.totalPesanan;

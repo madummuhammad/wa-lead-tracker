@@ -97,7 +97,31 @@
             <div class="stat-icon">Δ</div>
             <div class="stat-value" id="statTotalProfit">Rp 0</div>
             <div class="stat-label">Total Profit</div>
-            <p class="hint">Omset − (HPP × Qty). Return dihitung rugi penuh (Ongkir + HPP), Dibatalkan diabaikan.</p>
+            <p class="hint">Profit Terealisasi + Profit Berjalan + Kerugian Return. Dibatalkan diabaikan.</p>
+          </div>
+          <div class="stat-card stat-gross-profit">
+            <div class="stat-icon">Σ</div>
+            <div class="stat-value" id="statGrossProfit">Rp 0</div>
+            <div class="stat-label">Profit Kotor</div>
+            <p class="hint">Omset − (HPP × Qty) dari semua pesanan yang menghasilkan uang (belum dikurangi rugi Return).</p>
+          </div>
+          <div class="stat-card stat-realized-profit">
+            <div class="stat-icon">✓</div>
+            <div class="stat-value" id="statRealizedProfit">Rp 0</div>
+            <div class="stat-label">Profit Terealisasi</div>
+            <p class="hint">Cuma dari pesanan Diterima yang sudah rekonsiliasi - uang yang sudah pasti cair.</p>
+          </div>
+          <div class="stat-card stat-projected-profit">
+            <div class="stat-icon">…</div>
+            <div class="stat-value" id="statProjectedProfit">Rp 0</div>
+            <div class="stat-label">Profit Berjalan</div>
+            <p class="hint">Dari pesanan Dalam Pengiriman, Menunggu Dijemput, dan Menunggu Rekonsiliasi - proyeksi, belum final.</p>
+          </div>
+          <div class="stat-card stat-return-loss">
+            <div class="stat-icon">✕</div>
+            <div class="stat-value" id="statReturnLoss">Rp 0</div>
+            <div class="stat-label">Kerugian Return</div>
+            <p class="hint">Ongkos Kirim + HPP dari pesanan Return - dianggap barang rusak/tidak bisa dijual lagi.</p>
           </div>
           <div class="stat-card stat-ongkir">
             <div class="stat-icon">▤</div>
