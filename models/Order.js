@@ -50,6 +50,24 @@ const orderSchema = new mongoose.Schema(
     senderRegency: String, // Kota/Kabupaten Pengirim
     senderProvince: String, // Provinsi Pengirim
     senderAddress: String, // Alamat Pengirim
+
+    // ---- Problem-tracking fields (from the separate "problem tracking"
+    // xlsx export - a different, narrower export than the main Pesanan one
+    // above, re-imported over time to refresh these while an order is still
+    // stuck). Populated only for orders that are/were problematic; left
+    // undefined for every other order. Not cleared on re-import when an
+    // order stops appearing in a fresh file - once status/problem above
+    // (from the main Pesanan import) moves to Diterima/Return/Dibatalkan,
+    // the order already drops out of every "sedang bermasalah" view
+    // regardless of these fields, so there's nothing to clean up.
+    ongkirBerangkat: Number, // Ongkir Berangkat
+    ongkirPulang: Number, // Ongkir Pulang
+    potensiRTS: Number, // Potensi RTS (ongkirBerangkat + ongkirPulang from the source file)
+    problemStatusTerakhir: String, // Status Terakhir
+    problemKategori: String, // Kategori Problem
+    problemBuktiKurir: String, // Bukti Kurir - raw comma/newline-separated URL list as given
+    problemRiwayat: String, // Last 5 Problem Detail - raw multi-line history text
+    problemUpdatedAt: Date, // Tanggal Update Terakhir
   },
   { timestamps: true, _id: false }
 );

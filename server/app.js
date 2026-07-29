@@ -497,6 +497,22 @@ function createApp() {
     return digits.startsWith('62') ? `0${digits.slice(2)}` : digits;
   }
 
+  // Shared "what's this record's lead date" lookup, used everywhere a
+  // Pesanan/Pra-Pesanan/Dashboard date filter offers "Tanggal Lead" as an
+  // alternative to the record's own native date. Order.customerPhone and
+  // most Chat._id values share the same local 0-prefixed digit format, but
+  // PreOrder.customerPhone can be stored either 62-prefixed (rows imported
+  // via "Impor dari Lincah", see normalizePreOrderPhone) or local (rows
+  // added by hand) - and a handful of Chat rows created from a 62-prefixed
+  // PreOrder import ended up with a 62-prefixed _id too. Trying both the
+  // phone as-is and its normalized-to-local form covers every combination
+  // without needing to backfill/rewrite any existing phone/_id values.
+  function leadDateForPhone(phone, chatByPhone) {
+    if (!phone) return undefined;
+    const chat = chatByPhone.get(phone) || chatByPhone.get(normalizeOwnerNumber(phone));
+    return chat ? chat.firstMessageDate : undefined;
+  }
+
   function numOrUndefined(value) {
     if (value === undefined || value === null || value === '') return undefined;
     const n = Number(value);
@@ -530,8 +546,18 @@ function createApp() {
         filter.status = { $nin: ['Dibatalkan', 'Diterima'] };
         filter.trackingNumber = { $nin: [null, ''] };
       }
-      const docs = await Order.find(filter).sort({ createdDate: -1 }).lean();
-      const orders = docs.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }));
+      const [docs, chats] = await Promise.all([
+        Order.find(filter).sort({ createdDate: -1 }).lean(),
+        Chat.find({}, { firstMessageDate: 1 }).lean(),
+      ]);
+      const chatByPhone = new Map(chats.map((c) => [c._id, c]));
+      // leadDate lets the Pesanan page's "Berdasarkan Tanggal" filter offer
+      // Tanggal Lead as an alternative to createdDate without a second
+      // request - the extension (the other consumer of this route) simply
+      // never reads this extra field.
+      const orders = docs.map(({ _id, __v, ...rest }) => ({
+        id: _id, ...rest, leadDate: leadDateForPhone(rest.customerPhone, chatByPhone),
+      }));
       res.json({ orders });
     } catch (e) {
       res.status(500).json({ error: String(e) });
@@ -957,6 +983,96 @@ function createApp() {
     }
   });
 
+  const PROBLEM_TRACKING_REQUIRED_HEADERS = ['No. Order', 'Status Terakhir'];
+
+  // A separate, narrower export than the main Pesanan import above - only
+  // covers orders currently stuck with a courier, with the shipping-cost
+  // breakdown (Ongkir Berangkat/Pulang, Potensi RTS) and problem history the
+  // main export doesn't carry. Matched to an existing Order by "No. Order"
+  // (the same _id the main import uses) and only updates these
+  // problem-tracking fields - never creates a new Order (a row whose No.
+  // Order isn't already in the system is skipped and counted, not inserted,
+  // since this file has none of the other required Order fields). Re-running
+  // this with a fresher export is the expected, normal way to refresh these
+  // fields while an order is still stuck - see the Order model comment for
+  // why a resolved order doesn't need any explicit "clear" step here.
+  app.post('/api/orders/import-problem-tracking', requireAuth, upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'file is required (field name "file")' });
+
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(req.file.buffer);
+      const worksheet = workbook.worksheets[0];
+      if (!worksheet) return res.status(400).json({ error: 'file has no sheets' });
+
+      const headerMap = {};
+      worksheet.getRow(1).eachCell((cell, colNumber) => {
+        headerMap[String(cell.value || '').trim()] = colNumber;
+      });
+
+      const missingHeaders = PROBLEM_TRACKING_REQUIRED_HEADERS.filter((h) => !headerMap[h]);
+      if (missingHeaders.length > 0) {
+        return res.status(400).json({ error: `Kolom wajib tidak ditemukan di file: ${missingHeaders.join(', ')}` });
+      }
+
+      const getCell = (row, header) => {
+        const col = headerMap[header];
+        if (!col) return undefined;
+        const v = row.getCell(col).value;
+        if (v === null || v === undefined || v === '') return undefined;
+        if (typeof v === 'object' && v instanceof Date) return v;
+        if (typeof v === 'object' && 'text' in v) return v.text; // rich text
+        if (typeof v === 'object' && 'result' in v) return v.result; // formula
+        return v;
+      };
+
+      const noOrders = [];
+      const rowByNoOrder = new Map();
+      for (let r = 2; r <= worksheet.rowCount; r++) {
+        const row = worksheet.getRow(r);
+        const noOrder = String(getCell(row, 'No. Order') || '').trim();
+        if (!noOrder) continue;
+        noOrders.push(noOrder);
+        rowByNoOrder.set(noOrder, row);
+      }
+
+      const existingOrders = await Order.find({ _id: { $in: noOrders } }, { _id: 1 }).lean();
+      const existingIds = new Set(existingOrders.map((o) => o._id));
+
+      const ops = [];
+      let rowsNotFoundSkipped = 0;
+      rowByNoOrder.forEach((row, noOrder) => {
+        if (!existingIds.has(noOrder)) {
+          rowsNotFoundSkipped++;
+          return;
+        }
+        ops.push({
+          updateOne: {
+            filter: { _id: noOrder },
+            update: {
+              $set: {
+                ongkirBerangkat: numOrUndefined(getCell(row, 'Ongkir Berangkat')),
+                ongkirPulang: numOrUndefined(getCell(row, 'Ongkir Pulang')),
+                potensiRTS: numOrUndefined(getCell(row, 'Potensi RTS')),
+                problemStatusTerakhir: getCell(row, 'Status Terakhir'),
+                problemKategori: getCell(row, 'Kategori Problem'),
+                problemBuktiKurir: getCell(row, 'Bukti Kurir'),
+                problemRiwayat: getCell(row, 'Last 5 Problem Detail'),
+                problemUpdatedAt: getCell(row, 'Tanggal Update Terakhir'),
+              },
+            },
+          },
+        });
+      });
+
+      if (ops.length > 0) await Order.bulkWrite(ops);
+
+      res.json({ ok: true, updated: ops.length, rowsNotFoundSkipped });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   // ---- Pre-Orders (Pra-Pesanan - manually tracked, CRUD, before an order is
   // actually placed on lincah.id) ----
 
@@ -1065,8 +1181,14 @@ function createApp() {
       const filter = status === 'all' ? {}
         : status === 'converted' ? { convertedOrderId: { $exists: true } }
         : { convertedOrderId: { $exists: false } };
-      const docs = await PreOrder.find(filter).sort({ orderDate: -1 }).lean();
-      const preOrders = docs.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }));
+      const [docs, chats] = await Promise.all([
+        PreOrder.find(filter).sort({ orderDate: -1 }).lean(),
+        Chat.find({}, { firstMessageDate: 1 }).lean(),
+      ]);
+      const chatByPhone = new Map(chats.map((c) => [c._id, c]));
+      const preOrders = docs.map(({ _id, __v, ...rest }) => ({
+        id: _id, ...rest, leadDate: leadDateForPhone(rest.customerPhone, chatByPhone),
+      }));
       res.json({ preOrders });
     } catch (e) {
       res.status(500).json({ error: String(e) });
@@ -1824,6 +1946,62 @@ function createApp() {
         }))
         .sort((a, b) => b.rate - a.rate);
 
+      // ---- Per-produk breakdown (Total Pesanan/Omset/HPP/Profit/Profit
+      // Terealisasi per product, same filteredOrders as the cards above so
+      // summing every row here reproduces the overall cards exactly).
+      // Biaya Iklan per product comes from filteredAdSpends grouped via
+      // AdSpend.productId -> Product.name (an ad row with no product mapping
+      // yet has nothing to attribute to and is left out of every product's
+      // row, same as it's excluded from the overall totalBiayaIklan whenever
+      // a product filter is active).
+      const productNameById = new Map(products.map((p) => [String(p._id), p.name]));
+      const orderStatsByProduct = new Map();
+      filteredOrders.forEach((o) => {
+        const name = o.productName || '(Tanpa Produk)';
+        const entry = orderStatsByProduct.get(name) || {
+          totalPesanan: 0, omset: 0, hpp: 0, profitFromOrders: 0, realizedProfitFromOrders: 0,
+        };
+        entry.totalPesanan += 1;
+        if (o.status !== 'Dibatalkan') {
+          const hppCost = (o.hpp || 0) * (o.qty || 1);
+          entry.omset += orderRealPrice(o);
+          entry.hpp += hppCost;
+          entry.profitFromOrders += o.status === 'Return' ? -((o.shippingCost || 0) + hppCost) : (orderRealPrice(o) - hppCost);
+          if (o.status === 'Diterima' && o.reconciliationStatus === 'Sudah Rekonsiliasi') {
+            entry.realizedProfitFromOrders += orderRealPrice(o) - hppCost;
+          }
+        }
+        orderStatsByProduct.set(name, entry);
+      });
+      const adSpendByProduct = new Map();
+      filteredAdSpends.forEach((a) => {
+        // Bucket under the same '(Tanpa Produk)' label as orders with no
+        // productName, rather than dropping the row - a campaign not yet
+        // mapped to a product still counts toward the overall totalBiayaIklan
+        // card above, so silently excluding it here would make this table's
+        // Biaya Iklan column never add up to that card.
+        const name = (a.productId && productNameById.get(String(a.productId))) || '(Tanpa Produk)';
+        adSpendByProduct.set(name, (adSpendByProduct.get(name) || 0) + (a.spend || 0));
+      });
+      const allProductNames = new Set([...orderStatsByProduct.keys(), ...adSpendByProduct.keys()]);
+      const productBreakdown = Array.from(allProductNames)
+        .map((name) => {
+          const stats = orderStatsByProduct.get(name) || {
+            totalPesanan: 0, omset: 0, hpp: 0, profitFromOrders: 0, realizedProfitFromOrders: 0,
+          };
+          const biayaIklan = adSpendByProduct.get(name) || 0;
+          return {
+            productName: name,
+            totalPesanan: stats.totalPesanan,
+            omset: stats.omset,
+            biayaIklan,
+            hpp: stats.hpp,
+            profit: stats.profitFromOrders - biayaIklan,
+            realizedProfit: stats.realizedProfitFromOrders - biayaIklan,
+          };
+        })
+        .sort((a, b) => b.omset - a.omset);
+
       // Product options deliberately exclude Chat.product - that field is a
       // free-text label set per-chat from the extension and drifts from the
       // Product master (renamed/discontinued products, typos), which polluted
@@ -1842,6 +2020,7 @@ function createApp() {
       res.json({
         cards: { totalOmset, totalHpp, totalBiayaIklan, totalProfit, realizedProfit },
         returnRateByProvince,
+        productBreakdown,
         filterOptions,
       });
     } catch (e) {
@@ -1859,6 +2038,12 @@ function createApp() {
       const productNames = (Array.isArray(req.query.productName) ? req.query.productName : req.query.productName ? [req.query.productName] : [])
         .filter((p) => p && p !== 'all');
       const createdByEmail = req.query.createdByEmail && req.query.createdByEmail !== 'all' ? req.query.createdByEmail : null;
+      // Same 'order'/'lead' toggle as Laporan - see the comment there. Only
+      // affects Order (createdDate) and PreOrder (orderDate), which each have
+      // a native date of their own to switch away from; a Chat/lead itself
+      // has no separate "order date" to toggle, so chatMasuk/closingRate
+      // below always stay on firstMessageDate regardless of this setting.
+      const dateBasis = req.query.dateBasis === 'lead' ? 'lead' : 'order';
 
       const fromTime = from ? new Date(`${from}T00:00:00`).getTime() : null;
       const toTime = to ? new Date(`${to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000 - 1 : null;
@@ -1877,6 +2062,9 @@ function createApp() {
         PreOrder.find({}).lean(), // includes converted ones - needed for the funnel/CS history
         Settings.findById('singleton').lean(),
       ]);
+      const chatByPhone = new Map(chats.map((c) => [c._id, c]));
+      const orderDateForFilter = (o) => (dateBasis === 'lead' ? leadDateForPhone(o.customerPhone, chatByPhone) : o.createdDate);
+      const preOrderDateForFilter = (p) => (dateBasis === 'lead' ? leadDateForPhone(p.customerPhone, chatByPhone) : p.orderDate);
       const settings = settingsDoc || { closingLabels: [], manualClosing: {} };
 
       // Mirrors the client's isClosing() in dashboard.js exactly - same rule,
@@ -1895,12 +2083,12 @@ function createApp() {
       const filteredOrders = orders.filter((o) =>
         (!ownerNumber || (o.ownerNumber || '') === ownerNumber) &&
         (productNames.length === 0 || productNames.includes(o.productName || '')) &&
-        withinDateFilter(o.createdDate)
+        withinDateFilter(orderDateForFilter(o))
       );
       const filteredPreOrders = preOrders.filter((p) =>
         (productNames.length === 0 || productNames.includes(p.productName || '')) &&
         (!createdByEmail || (p.createdByEmail || '') === createdByEmail) &&
-        withinDateFilter(p.orderDate)
+        withinDateFilter(preOrderDateForFilter(p))
       );
 
       // ---- Cards ----
@@ -1919,6 +2107,60 @@ function createApp() {
       const totalOngkir = nonCancelledOrders.reduce((sum, o) => sum + (o.shippingCost || 0), 0);
       const totalBiayaCod = nonCancelledOrders.reduce((sum, o) => sum + (o.codFee || 0), 0);
       const totalPesanan = filteredOrders.length;
+
+      // ---- Paket bermasalah (Order.problem - catatan kendala dari kurir,
+      // mis. "NOBODY AT HOME", "CONSIGNEE REFUSE TO PAY COD", diisi lewat
+      // impor xlsx Pesanan) ----
+      // The source export fills every row's Problem cell with literally "-"
+      // when there's nothing wrong (not a blank cell) - so a plain
+      // non-empty check treats every single order as "problematic". Has to
+      // be excluded here the same way the standalone read of the raw xlsx
+      // did earlier.
+      // "Sedang bermasalah" = catatan Problem terisi (bukan "-") DAN status
+      // belum final (bukan Diterima/Return/Dibatalkan) - begitu order itu
+      // resolve ke salah satu status final, paketnya sudah melewati apa pun
+      // yang memicu catatan itu, jadi tidak lagi dihitung sebagai masalah
+      // AKTIF walau catatan Problem-nya sendiri tetap tersimpan sebagai
+      // histori.
+      const problematicOrders = filteredOrders.filter((o) => {
+        const problem = (o.problem || '').trim();
+        return problem !== '' && problem !== '-' &&
+          !['Diterima', 'Return', 'Dibatalkan'].includes(o.status);
+      });
+      const problematicOrderCount = problematicOrders.length;
+      const problematicOrderOmset = problematicOrders.reduce((sum, o) => sum + orderRealPrice(o), 0);
+      // Only populated for orders that have gone through the separate
+      // "problem tracking" import (POST /api/orders/import-problem-tracking)
+      // - orders whose problem note came only from the main Pesanan import
+      // contribute 0 here since there's no ongkir breakdown for them yet.
+      const problematicOrderPotensiRTS = problematicOrders.reduce((sum, o) => sum + (o.potensiRTS || 0), 0);
+
+      // ---- Ongkir Dihemat / Ongkir Return (Invoice) ----
+      // Two deliberately separate numbers (validated against lincah's own
+      // dashboard, which shows the same split) - never net them into one
+      // "Total Ongkir Dihemat" figure here, since that hides which half is
+      // money already sitting safely in Saldo (Dihemat) vs money that
+      // actually got billed and deducted from that same Saldo (Return).
+      //
+      // Ongkos Kirim Dihemat: originalShippingCost (tarif normal) minus
+      // shippingCost (tarif borongan lincah, what's actually deducted from
+      // Nilai COD) on every non-cancelled order - the running total of
+      // "you paid less than list price" that's already baked into every
+      // order's own Omset above, not extra money on top of it.
+      const ongkirDihemat = nonCancelledOrders.reduce(
+        (sum, o) => sum + ((o.originalShippingCost || 0) - (o.shippingCost || 0)), 0
+      );
+      // Ongkos Kirim Return (Invoice): the return-leg shipping cost billed
+      // once a package comes back - uses the real ongkirPulang from a
+      // Problem Tracking import when available (see
+      // POST /api/orders/import-problem-tracking), falling back to
+      // shippingCost (the outbound leg) as a same-rate estimate for Return
+      // orders that never went through that import - validated against a
+      // real lincah invoice where this fallback landed exactly on their
+      // reported figure.
+      const ongkirReturnInvoice = filteredOrders
+        .filter((o) => o.status === 'Return')
+        .reduce((sum, o) => sum + (o.ongkirPulang ?? o.shippingCost ?? 0), 0);
 
       // Omset + jumlah pesanan per status - satu card per status di dashboard.
       // "Diterima" dipecah jadi dua label: yang sudah direkonsiliasi tetap
@@ -1989,8 +2231,9 @@ function createApp() {
       // ---- Revenue by day (line chart) ----
       const revenueByDayMap = new Map();
       nonCancelledOrders.forEach((o) => {
-        if (!o.createdDate) return;
-        const day = new Date(o.createdDate).toISOString().slice(0, 10);
+        const orderDate = orderDateForFilter(o);
+        if (!orderDate) return;
+        const day = new Date(orderDate).toISOString().slice(0, 10);
         revenueByDayMap.set(day, (revenueByDayMap.get(day) || 0) + orderRealPrice(o));
       });
       const revenueByDay = Array.from(revenueByDayMap.entries())
@@ -2114,6 +2357,8 @@ function createApp() {
           grossProfit, realizedProfit, projectedProfit, returnLoss,
           totalPesanan, avgOrderValue, cancellationRate,
           activePreOrders, chatMasuk, closingCount, closingRate,
+          problematicOrderCount, problematicOrderOmset, problematicOrderPotensiRTS,
+          ongkirDihemat, ongkirReturnInvoice,
         },
         omsetByStatus,
         profitByStatus,

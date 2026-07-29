@@ -312,6 +312,23 @@ function escapeHtml(str) {
   }[c]));
 }
 
+// "Last 5 Problem Detail" from the problem-tracking import is a raw
+// multi-line "[date] message" history - render each line separately instead
+// of collapsing the newlines into one run-on line.
+function renderProblemRiwayat(text) {
+  if (!text) return '-';
+  return String(text).split('\n').map((line) => escapeHtml(line)).join('<br>');
+}
+
+// "Bukti Kurir" is a comma-separated list of photo URLs (0 to several) -
+// numbered links instead of one unreadable wall of raw URL text.
+function renderBuktiKurir(text) {
+  if (!text) return '-';
+  const urls = String(text).split(',').map((u) => u.trim()).filter(Boolean);
+  if (urls.length === 0) return '-';
+  return urls.map((u, i) => `<a href="${escapeHtml(u)}" target="_blank" rel="noopener">Foto ${i + 1}</a>`).join(' ');
+}
+
 function readFilterState(ids) {
   return {
     owner: el(ids.owner).value,
@@ -432,6 +449,11 @@ function renderDashboardCards(cards) {
   el('statTotal').textContent = cards.chatMasuk;
   el('statClosing').textContent = cards.closingCount;
   el('statRate').textContent = `${cards.closingRate}%`;
+  el('statProblematicCount').textContent = cards.problematicOrderCount;
+  el('statProblematicOmset').textContent = formatRupiah(cards.problematicOrderOmset);
+  el('statProblematicPotensiRTS').textContent = formatRupiah(cards.problematicOrderPotensiRTS);
+  el('statOngkirDihemat').textContent = formatRupiah(cards.ongkirDihemat);
+  el('statOngkirReturnInvoice').textContent = formatRupiah(cards.ongkirReturnInvoice);
 }
 
 function renderDashboardCharts(stats) {
@@ -521,10 +543,12 @@ async function renderDashboard() {
     const params = new URLSearchParams();
     const from = el('dashFilterFrom').value;
     const to = el('dashFilterTo').value;
+    const dateBasis = el('dashFilterDateBasis').value;
     const owner = el('dashFilterOwner').value;
     const creator = el('dashFilterCreator').value;
     if (from) params.set('from', from);
     if (to) params.set('to', to);
+    if (dateBasis && dateBasis !== 'order') params.set('dateBasis', dateBasis);
     if (owner && owner !== 'all') params.set('ownerNumber', owner);
     dashSelectedProducts.forEach((p) => params.append('productName', p));
     if (creator && creator !== 'all') params.set('createdByEmail', creator);
@@ -916,6 +940,17 @@ function populateOrderOwnerSelect(select) {
   select.value = owners.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
 }
 
+// Same "sedang bermasalah" rule as the Dashboard cards (server/app.js) -
+// Order.problem filled with something other than the source file's "no
+// problem" placeholder "-", and status not yet in a final state. Duplicated
+// here rather than shared over the wire since it's a pure client-side table
+// filter, same as every other Pesanan filter.
+function isProblematicOrder(order) {
+  const problem = (order.problem || '').trim();
+  return problem !== '' && problem !== '-' &&
+    !['Diterima', 'Return', 'Dibatalkan'].includes(order.status);
+}
+
 function renderOrdersTable() {
   populateOrderStatusSelect(el('orderFilterStatus'));
   populateOrderOwnerSelect(el('orderFilterOwner'));
@@ -926,6 +961,8 @@ function renderOrdersTable() {
   const ownerFilter = el('orderFilterOwner').value;
   const from = el('orderFilterFrom').value;
   const to = el('orderFilterTo').value;
+  const dateBasis = el('orderFilterDateBasis').value;
+  const problemStatusFilter = el('orderFilterProblemStatus').value;
   const selectedProducts = getMultiselectSelection('orderProduct');
   const q = el('orderSearchBox').value.trim().toLowerCase();
 
@@ -933,7 +970,10 @@ function renderOrdersTable() {
     if (statusFilter !== 'all' && (order.status || '') !== statusFilter) return false;
     if (ownerFilter !== 'all' && (order.ownerNumber || '') !== ownerFilter) return false;
     if (selectedProducts.size > 0 && !selectedProducts.has(order.productName || '')) return false;
-    if (!withinDateRange(order.createdDate, from, to)) return false;
+    if (problemStatusFilter === 'problematic' && !isProblematicOrder(order)) return false;
+    if (problemStatusFilter === 'normal' && isProblematicOrder(order)) return false;
+    const dateToCheck = dateBasis === 'lead' ? order.leadDate : order.createdDate;
+    if (!withinDateRange(dateToCheck, from, to)) return false;
     if (q) {
       const hay = `${order.customerName || ''} ${order.customerPhone || ''} ${order.trackingNumber || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
@@ -1027,6 +1067,13 @@ function renderOrdersTable() {
       <td data-col="originalShippingCost">${escapeHtml(formatRupiah(order.originalShippingCost))}</td>
       <td data-col="district">${escapeHtml(order.district || '-')}</td>
       <td data-col="province">${escapeHtml(order.province || '-')}</td>
+      <td data-col="ongkirBerangkat">${escapeHtml(formatRupiah(order.ongkirBerangkat))}</td>
+      <td data-col="ongkirPulang">${escapeHtml(formatRupiah(order.ongkirPulang))}</td>
+      <td data-col="potensiRTS">${escapeHtml(formatRupiah(order.potensiRTS))}</td>
+      <td data-col="problemStatusTerakhir">${escapeHtml(order.problemStatusTerakhir || '-')}</td>
+      <td data-col="problemKategori">${escapeHtml(order.problemKategori || '-')}</td>
+      <td data-col="problemBuktiKurir">${renderBuktiKurir(order.problemBuktiKurir)}</td>
+      <td data-col="problemRiwayat">${renderProblemRiwayat(order.problemRiwayat)}</td>
       <td>
         <button class="edit-product-btn edit-order-btn" data-id="${escapeHtml(order.id)}">Edit</button>
         <button class="delete-product-btn delete-order-btn" data-id="${escapeHtml(order.id)}">Hapus</button>
@@ -1410,6 +1457,37 @@ function importOrders() {
   return importLincahOrders({ file: 'orderImportFile', msg: 'orderImportMsg', btn: 'orderImportBtn' });
 }
 
+// Separate, much simpler import than importLincahOrders above - a plain
+// update-by-No.-Order against Orders that already exist, no product
+// resolution/dry-run popup needed since this file only ever adds the
+// problem-tracking fields (see server/app.js import-problem-tracking route).
+async function importOrderProblemTracking() {
+  const fileInput = el('orderProblemImportFile');
+  const file = fileInput.files[0];
+  el('orderProblemImportMsg').textContent = '';
+  if (!file) {
+    el('orderProblemImportMsg').textContent = 'Pilih file .xlsx dulu.';
+    return;
+  }
+  el('orderProblemImportBtn').disabled = true;
+  try {
+    const result = await apiUploadFile('/api/orders/import-problem-tracking', file);
+    el('orderProblemImportMsg').textContent =
+      `${result.updated} pesanan diperbarui` +
+      (result.rowsNotFoundSkipped > 0 ? `, ${result.rowsNotFoundSkipped} baris dilewati (No. Order tidak ditemukan)` : '') + '.';
+    fileInput.value = '';
+    await loadOrders();
+  } catch (e) {
+    if (e.message === 'unauthorized') {
+      handleApiError(e);
+      return;
+    }
+    el('orderProblemImportMsg').textContent = e.message || 'Gagal mengimpor file.';
+  } finally {
+    el('orderProblemImportBtn').disabled = false;
+  }
+}
+
 function importOrdersFromPreOrderPage() {
   return importLincahOrders({
     file: 'preOrderLincahImportFile', msg: 'preOrderLincahImportMsg', btn: 'preOrderLincahImportBtn',
@@ -1771,6 +1849,7 @@ function renderPreOrdersTable() {
   const ownerFilter = el('preOrderFilterOwner').value;
   const from = el('preOrderFilterFrom').value;
   const to = el('preOrderFilterTo').value;
+  const dateBasis = el('preOrderFilterDateBasis').value;
   const selectedProducts = getMultiselectSelection('preOrderProduct');
   const notifyStatusFilter = el('preOrderFilterNotifyStatus').value;
   const responseStatusFilter = el('preOrderFilterResponseStatus').value;
@@ -1784,7 +1863,8 @@ function renderPreOrdersTable() {
     // specific Akun WA filter (only "Semua akun" shows it).
     if (ownerFilter !== 'all' && preOrderOwnerNumber(p) !== ownerFilter) return false;
     if (selectedProducts.size > 0 && !selectedProducts.has(p.productName || '')) return false;
-    if (!withinDateRange(p.orderDate, from, to)) return false;
+    const dateToCheck = dateBasis === 'lead' ? p.leadDate : p.orderDate;
+    if (!withinDateRange(dateToCheck, from, to)) return false;
     if (notifyStatusFilter !== 'all' && preOrderNotifyStatus(p).state !== notifyStatusFilter) return false;
     if (responseStatusFilter !== 'all' && preOrderResponseStatus(p).state !== responseStatusFilter) return false;
     if (anekaFilter === 'checked' && p.aneka !== true) return false;
@@ -2567,6 +2647,41 @@ function loadLaporanProvinceReturnPageSize() {
 }
 let laporanProvinceReturnPageSize = loadLaporanProvinceReturnPageSize();
 
+// Same "all" != a number caveat as loadLaporanProvinceReturnPageSize above,
+// just defaulting to 5 instead of 10 - this is a top-N ranking ("5 produk
+// teratas"), so a shorter default fits the typical use better than a full
+// browseable-log-sized page.
+function loadLaporanProductBreakdownPageSize() {
+  try {
+    const store = JSON.parse(localStorage.getItem(PAGE_SIZE_STORAGE) || '{}');
+    const stored = store.laporanProductBreakdown;
+    return stored === 'all' ? 'all' : (Number(stored) || 5);
+  } catch (e) {
+    return 5;
+  }
+}
+let laporanProductBreakdownPageSize = loadLaporanProductBreakdownPageSize();
+
+function renderLaporanProductBreakdownRows(productBreakdown) {
+  const all = productBreakdown || [];
+  const limited = laporanProductBreakdownPageSize === 'all' ? all : all.slice(0, laporanProductBreakdownPageSize);
+  const tbody = el('laporanProductBreakdownTableBody');
+  tbody.innerHTML = limited
+    .map((p, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(p.productName)}</td>
+        <td>${escapeHtml(p.totalPesanan)}</td>
+        <td>${formatRupiah(p.omset)}</td>
+        <td>${formatRupiah(p.biayaIklan)}</td>
+        <td>${formatRupiah(p.hpp)}</td>
+        <td>${formatSignedRupiah(p.profit)}</td>
+        <td>${formatSignedRupiah(p.realizedProfit)}</td>
+      </tr>`)
+    .join('');
+  el('laporanProductBreakdownEmptyState').classList.toggle('hidden', all.length > 0);
+}
+
 function renderLaporanProvinceReturnRows(returnRateByProvince) {
   const all = returnRateByProvince || [];
   const limited = laporanProvinceReturnPageSize === 'all' ? all : all.slice(0, laporanProvinceReturnPageSize);
@@ -2624,7 +2739,7 @@ function setupSortableTable({ tableId, defaultKey, defaultDir, onRender }) {
         state.dir = state.dir === 'asc' ? 'desc' : 'asc';
       } else {
         state.key = th.dataset.sortKey;
-        state.dir = state.key === 'province' ? 'asc' : 'desc';
+        state.dir = (state.key === 'province' || state.key === 'productName') ? 'asc' : 'desc';
       }
       applySort();
     });
@@ -2641,6 +2756,7 @@ function setupSortableTable({ tableId, defaultKey, defaultDir, onRender }) {
 }
 
 let laporanProvinceReturnSortCtrl = null;
+let laporanProductBreakdownSortCtrl = null;
 
 function initLaporanProvinceTables() {
   laporanProvinceReturnSortCtrl = setupSortableTable({
@@ -2648,6 +2764,12 @@ function initLaporanProvinceTables() {
     defaultKey: 'rate',
     defaultDir: 'desc',
     onRender: renderLaporanProvinceReturnRows,
+  });
+  laporanProductBreakdownSortCtrl = setupSortableTable({
+    tableId: 'laporanProductBreakdownTable',
+    defaultKey: 'omset',
+    defaultDir: 'desc',
+    onRender: renderLaporanProductBreakdownRows,
   });
 }
 
@@ -2673,6 +2795,7 @@ async function renderLaporan() {
     renderMultiselectPanel('laporanProduct', LAPORAN_PRODUCT_MULTISELECT, stats.filterOptions.products);
     renderLaporanCards(stats.cards);
     laporanProvinceReturnSortCtrl.update(stats.returnRateByProvince);
+    laporanProductBreakdownSortCtrl.update(stats.productBreakdown);
   } catch (e) {
     handleApiError(e, 'Gagal memuat data laporan.');
   } finally {
@@ -2846,6 +2969,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   el('productCancelEditBtn').addEventListener('click', closeProductFormModal);
   el('productSaveBtn').addEventListener('click', saveProduct);
   el('orderImportBtn').addEventListener('click', importOrders);
+  el('orderProblemImportBtn').addEventListener('click', importOrderProblemTracking);
   el('preOrderImportBtn').addEventListener('click', importPreOrders);
   el('preOrderLincahImportBtn').addEventListener('click', importOrdersFromPreOrderPage);
   el('preOrderSaveBtn').addEventListener('click', savePreOrder);
@@ -2898,12 +3022,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       renderOrdersTable();
     });
   });
+  el('orderFilterDateBasis').addEventListener('change', () => {
+    ordersPage = 1;
+    renderOrdersTable();
+  });
+  el('orderFilterProblemStatus').addEventListener('change', () => {
+    ordersPage = 1;
+    renderOrdersTable();
+  });
   wireMultiselect('orderProduct', ORDER_PRODUCT_MULTISELECT, () => {
     ordersPage = 1;
     renderOrdersTable();
   });
   el('preOrdersRefreshBtn').addEventListener('click', reloadPreOrdersPageData);
-  ['preOrderFilterCreator', 'preOrderFilterOwner', 'preOrderFilterFrom', 'preOrderFilterTo', 'preOrderFilterNotifyStatus', 'preOrderFilterResponseStatus', 'preOrderFilterAneka'].forEach((id) => {
+  ['preOrderFilterCreator', 'preOrderFilterOwner', 'preOrderFilterFrom', 'preOrderFilterTo', 'preOrderFilterDateBasis', 'preOrderFilterNotifyStatus', 'preOrderFilterResponseStatus', 'preOrderFilterAneka'].forEach((id) => {
     el(id).addEventListener('input', () => {
       preOrdersPage = 1;
       renderPreOrdersTable();
@@ -3042,6 +3174,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   ['dashFilterFrom', 'dashFilterTo', 'dashFilterOwner', 'dashFilterCreator'].forEach((id) => {
     el(id).addEventListener('input', renderDashboard);
   });
+  el('dashFilterDateBasis').addEventListener('change', renderDashboard);
   el('dashFilterQuickRange').addEventListener('change', applyDashQuickRange);
   // Editing Dari/Sampai by hand no longer matches whatever quick range was
   // selected (if any) - fall back to "Kustom" so the dropdown doesn't keep
@@ -3125,6 +3258,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     laporanProvinceReturnPageSize = raw === 'all' ? 'all' : Number(raw) || 10;
     savePageSize('laporanProvinceReturn', laporanProvinceReturnPageSize);
     laporanProvinceReturnSortCtrl.refresh();
+  });
+  el('laporanProductBreakdownPageSize').value = laporanProductBreakdownPageSize;
+  el('laporanProductBreakdownPageSize').addEventListener('change', () => {
+    const raw = el('laporanProductBreakdownPageSize').value;
+    laporanProductBreakdownPageSize = raw === 'all' ? 'all' : Number(raw) || 5;
+    savePageSize('laporanProductBreakdown', laporanProductBreakdownPageSize);
+    laporanProductBreakdownSortCtrl.refresh();
   });
 
   const storedToken = localStorage.getItem(TOKEN_STORAGE);

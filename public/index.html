@@ -83,6 +83,12 @@
           <label>Sampai
             <input type="date" id="dashFilterTo" />
           </label>
+          <label>Berdasarkan Tanggal
+            <select id="dashFilterDateBasis">
+              <option value="order">Tanggal Order</option>
+              <option value="lead">Tanggal Lead</option>
+            </select>
+          </label>
           <label>Akun WA
             <select id="dashFilterOwner">
               <option value="all">Semua akun</option>
@@ -184,6 +190,36 @@
             <div class="stat-icon">%</div>
             <div class="stat-value" id="statRate">0%</div>
             <div class="stat-label">Closing Rate</div>
+          </div>
+          <div class="stat-card stat-problem">
+            <div class="stat-icon">⚠</div>
+            <div class="stat-value" id="statProblematicCount">0</div>
+            <div class="stat-label">Paket Bermasalah</div>
+            <p class="hint">Pesanan dengan catatan Problem dari kurir yang belum Diterima/Return/Dibatalkan.</p>
+          </div>
+          <div class="stat-card stat-problem">
+            <div class="stat-icon">⚠</div>
+            <div class="stat-value" id="statProblematicOmset">Rp 0</div>
+            <div class="stat-label">Omset Paket Bermasalah</div>
+            <p class="hint">Nilai COD − Ongkos Kirim − Biaya COD dari paket bermasalah di atas - omset yang berisiko tertunda/gagal.</p>
+          </div>
+          <div class="stat-card stat-problem">
+            <div class="stat-icon">⚠</div>
+            <div class="stat-value" id="statProblematicPotensiRTS">Rp 0</div>
+            <div class="stat-label">Potensi Kerugian RTS</div>
+            <p class="hint">Ongkir Berangkat + Ongkir Pulang dari paket bermasalah di atas, hasil impor Problem Tracking di halaman Pesanan - 0 untuk paket yang belum diimpor detail ongkirnya.</p>
+          </div>
+          <div class="stat-card stat-omset">
+            <div class="stat-icon">Rp</div>
+            <div class="stat-value" id="statOngkirDihemat">Rp 0</div>
+            <div class="stat-label">Ongkos Kirim Dihemat</div>
+            <p class="hint">Ongkos Kirim Asli − Ongkos Kirim, dari pesanan yang tidak dibatalkan - sudah termasuk di dalam Omset di atas, bukan uang tambahan di luar itu.</p>
+          </div>
+          <div class="stat-card stat-return-loss">
+            <div class="stat-icon">✕</div>
+            <div class="stat-value" id="statOngkirReturnInvoice">Rp 0</div>
+            <div class="stat-label">Ongkir Return (Invoice)</div>
+            <p class="hint">Ongkir pulang dari pesanan Return - tagihan terpisah yang memotong Saldo, dipakai dari Problem Tracking kalau ada, kalau belum diimpor diperkirakan sama besar dengan Ongkos Kirim berangkatnya.</p>
           </div>
         </section>
 
@@ -335,6 +371,39 @@
           </section>
           <label class="page-size-picker">Tampilkan
             <select id="laporanProvinceReturnPageSize">
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="all">Semua</option>
+            </select>
+            baris
+          </label>
+        </section>
+
+        <section class="block">
+          <h2>Performa per Produk</h2>
+          <p class="hint">Diurutkan dari Omset paling tinggi. Ikut filter tanggal/akun/produk/CS di atas.</p>
+          <section class="table-wrap scroll-x">
+            <table id="laporanProductBreakdownTable">
+              <thead>
+                <tr>
+                  <th>No.</th>
+                  <th class="sortable-col" data-sort-key="productName">Produk</th>
+                  <th class="sortable-col" data-sort-key="totalPesanan">Total Pesanan</th>
+                  <th class="sortable-col" data-sort-key="omset">Omset</th>
+                  <th class="sortable-col" data-sort-key="biayaIklan">Biaya Iklan</th>
+                  <th class="sortable-col" data-sort-key="hpp">HPP</th>
+                  <th class="sortable-col" data-sort-key="profit">Profit</th>
+                  <th class="sortable-col" data-sort-key="realizedProfit">Profit Terealisasi</th>
+                </tr>
+              </thead>
+              <tbody id="laporanProductBreakdownTableBody"></tbody>
+            </table>
+            <div id="laporanProductBreakdownEmptyState" class="notice hidden">Belum ada data.</div>
+          </section>
+          <label class="page-size-picker">Tampilkan
+            <select id="laporanProductBreakdownPageSize">
               <option value="5">5</option>
               <option value="10">10</option>
               <option value="20">20</option>
@@ -557,12 +626,36 @@
           <p id="orderImportMsg" class="hint"></p>
         </section>
 
+        <section class="block">
+          <h2>Impor Problem Tracking</h2>
+          <p class="hint">
+            File .xlsx terpisah dari lincah khusus paket yang sedang
+            bermasalah (No. Order, Ongkir Berangkat, Ongkir Pulang, Potensi
+            RTS, Status Terakhir, Kategori Problem, Bukti Kurir, Last 5
+            Problem Detail). Dicocokkan ke Pesanan yang sudah ada lewat No.
+            Order - baris yang No. Order-nya belum ada di sistem dilewati.
+            Aman diimpor berulang kali dengan file yang lebih baru untuk
+            memperbarui data ini selama paketnya masih bermasalah.
+          </p>
+          <div class="user-form">
+            <input type="file" id="orderProblemImportFile" accept=".xlsx" />
+            <button id="orderProblemImportBtn">Impor</button>
+          </div>
+          <p id="orderProblemImportMsg" class="hint"></p>
+        </section>
+
         <section class="filters">
           <label>Dari
             <input type="date" id="orderFilterFrom" />
           </label>
           <label>Sampai
             <input type="date" id="orderFilterTo" />
+          </label>
+          <label>Berdasarkan Tanggal
+            <select id="orderFilterDateBasis">
+              <option value="order">Tanggal Order</option>
+              <option value="lead">Tanggal Lead</option>
+            </select>
           </label>
           <label>Filter Status
             <select id="orderFilterStatus">
@@ -579,6 +672,13 @@
               <button type="button" class="multiselect-toggle" id="orderFilterProductToggle">Semua produk</button>
               <div class="multiselect-panel hidden" id="orderFilterProductPanel"></div>
             </div>
+          </label>
+          <label>Status Bermasalah
+            <select id="orderFilterProblemStatus">
+              <option value="all">Semua</option>
+              <option value="problematic">Sedang Bermasalah</option>
+              <option value="normal">Tidak Bermasalah</option>
+            </select>
           </label>
           <input type="search" id="orderSearchBox" placeholder="Cari nama / no. HP / no. resi..." />
         </section>
@@ -640,6 +740,13 @@
                 <th data-col="originalShippingCost">Ongkos Kirim Asli</th>
                 <th data-col="district">Kecamatan</th>
                 <th data-col="province">Provinsi</th>
+                <th data-col="ongkirBerangkat">Ongkir Berangkat</th>
+                <th data-col="ongkirPulang">Ongkir Pulang</th>
+                <th data-col="potensiRTS">Potensi RTS</th>
+                <th data-col="problemStatusTerakhir">Status Terakhir (Kurir)</th>
+                <th data-col="problemKategori">Kategori Problem</th>
+                <th data-col="problemBuktiKurir">Bukti Kurir</th>
+                <th data-col="problemRiwayat">Riwayat Problem</th>
                 <th></th>
               </tr>
             </thead>
@@ -908,6 +1015,12 @@
           </label>
           <label>Sampai
             <input type="date" id="preOrderFilterTo" />
+          </label>
+          <label>Berdasarkan Tanggal
+            <select id="preOrderFilterDateBasis">
+              <option value="order">Tanggal Order</option>
+              <option value="lead">Tanggal Lead</option>
+            </select>
           </label>
           <label>Filter CS
             <select id="preOrderFilterCreator">
