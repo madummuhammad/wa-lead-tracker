@@ -43,6 +43,9 @@
         <button class="nav-link" data-page="templates">
           <span class="nav-icon">✎</span> Template Pesan
         </button>
+        <button class="nav-link" data-page="iklan">
+          <span class="nav-icon">📣</span> Iklan
+        </button>
         <button class="nav-link hidden" id="usersNavBtn" data-page="users">
           <span class="nav-icon">⚙</span> Pengaturan User
         </button>
@@ -62,6 +65,15 @@
         </header>
 
         <section class="filters compact">
+          <label>Rentang Cepat
+            <select id="dashFilterQuickRange">
+              <option value="custom">Kustom</option>
+              <option value="today">Hari Ini</option>
+              <option value="yesterday">Kemarin</option>
+              <option value="last7">7 Hari Terakhir</option>
+              <option value="last30">30 Hari Terakhir</option>
+            </select>
+          </label>
           <label>Dari
             <input type="date" id="dashFilterFrom" />
           </label>
@@ -813,6 +825,13 @@
               <option value="dibatalkan">Dibatalkan</option>
             </select>
           </label>
+          <label>Filter ANEKA
+            <select id="preOrderFilterAneka">
+              <option value="all">Semua</option>
+              <option value="checked">Sudah Dicentang</option>
+              <option value="unchecked">Belum Dicentang</option>
+            </select>
+          </label>
         </section>
 
         <section class="bulk-actions">
@@ -1094,6 +1113,161 @@
           </div>
         </div>
       </section>
+
+      <!-- ================= IKLAN PAGE ================= -->
+      <section id="iklanPage" class="page hidden">
+        <header class="page-header">
+          <h1>Iklan</h1>
+          <button id="adsRefreshBtn" class="btn-outline" title="Ambil data terbaru dari MongoDB">⟳ Muat Ulang</button>
+        </header>
+
+        <section class="block">
+          <h2>Impor Data Iklan dari CSV</h2>
+          <p class="hint">
+            File .csv hasil ekspor dari Meta Ads Manager (per set iklan per
+            hari). Kampanye yang belum pernah dipetakan ke Produk akan
+            ditanyakan setelah file dipilih - kampanye yang sudah pernah
+            dipetakan tidak akan ditanya lagi.
+          </p>
+          <div class="user-form">
+            <input type="file" id="adImportFile" accept=".csv" />
+            <button id="adImportBtn">Impor</button>
+          </div>
+          <p id="adImportMsg" class="hint"></p>
+        </section>
+
+        <section class="stats">
+          <div class="stat-card stat-ongkir">
+            <div class="stat-icon">Rp</div>
+            <div class="stat-value" id="statAdsTotalSpend">Rp 0</div>
+            <div class="stat-label">Total Biaya Iklan</div>
+          </div>
+          <div class="stat-card stat-total">
+            <div class="stat-icon">◱</div>
+            <div class="stat-value" id="statAdsTotalCampaigns">0</div>
+            <div class="stat-label">Jumlah Kampanye</div>
+          </div>
+          <div class="stat-card stat-aov">
+            <div class="stat-icon">~</div>
+            <div class="stat-value" id="statAdsTotalResults">0</div>
+            <div class="stat-label">Total Hasil</div>
+            <p class="hint">Jumlahnya bisa gabungan jenis hasil berbeda (percakapan, klik tautan, dst) - lihat kolom "Jenis Hasil" per baris.</p>
+          </div>
+        </section>
+
+        <section class="block">
+          <h2>Mapping Kampanye ke Produk</h2>
+          <p class="hint">Sekali dipetakan, kampanye yang sama tidak perlu dipetakan ulang di import berikutnya. Ubah di sini kapan saja - perubahan berlaku juga ke data yang sudah pernah diimpor.</p>
+          <section class="table-wrap scroll-x">
+            <table id="adCampaignMappingTable">
+              <thead>
+                <tr>
+                  <th>Nama Kampanye</th>
+                  <th>ID Kampanye</th>
+                  <th>Produk</th>
+                </tr>
+              </thead>
+              <tbody id="adCampaignMappingTableBody"></tbody>
+            </table>
+            <div id="adCampaignMappingEmptyState" class="notice hidden">Belum ada kampanye - impor data iklan dulu.</div>
+          </section>
+        </section>
+
+        <section class="filters">
+          <label>Dari
+            <input type="date" id="adFilterFrom" />
+          </label>
+          <label>Sampai
+            <input type="date" id="adFilterTo" />
+          </label>
+          <label>Status
+            <select id="adFilterStatus">
+              <option value="all">Semua Status</option>
+            </select>
+          </label>
+          <label>Produk
+            <div class="multiselect" id="adFilterProductMulti">
+              <button type="button" class="multiselect-toggle" id="adFilterProductToggle">Semua produk</button>
+              <div class="multiselect-panel hidden" id="adFilterProductPanel"></div>
+            </div>
+          </label>
+          <input type="search" id="adSearchBox" placeholder="Cari nama kampanye / set iklan..." />
+        </section>
+
+        <section class="bulk-actions">
+          <span id="adsSelectedCount"></span>
+          <button id="adsDeleteSelectedBtn" class="danger" disabled>Hapus yang Dipilih</button>
+          <div class="multiselect column-toggle" id="adsColumnMulti">
+            <button type="button" class="multiselect-toggle" id="adsColumnToggle">Kolom</button>
+            <div class="multiselect-panel hidden" id="adsColumnPanel"></div>
+          </div>
+        </section>
+
+        <section class="table-wrap scroll-x">
+          <table id="adsTable">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="adsSelectAllCheckbox" title="Pilih semua" /></th>
+                <th data-col="kampanye">Nama Kampanye</th>
+                <th data-col="setIklan">Nama Set Iklan</th>
+                <th data-col="tanggal">Tanggal</th>
+                <th data-col="status">Status</th>
+                <th data-col="produk">Produk</th>
+                <th data-col="jangkauan">Jangkauan</th>
+                <th data-col="impresi">Impresi</th>
+                <th data-col="frekuensi">Frekuensi</th>
+                <th data-col="jenisHasil">Jenis Hasil</th>
+                <th data-col="hasil">Hasil</th>
+                <th data-col="biaya">Biaya</th>
+                <th data-col="biayaPerHasil">Biaya per Hasil</th>
+                <th data-col="mulai">Mulai</th>
+                <th data-col="berakhir">Berakhir</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="adsTableBody"></tbody>
+          </table>
+          <div id="adsEmptyState" class="notice hidden">Belum ada data iklan.</div>
+          <div id="adsLoadingState" class="notice hidden">Memuat data dari MongoDB...</div>
+        </section>
+
+        <section class="pagination">
+          <button id="adsPrevBtn" class="btn-outline">‹ Sebelumnya</button>
+          <span id="adsPageInfo" class="pagination-info"></span>
+          <button id="adsNextBtn" class="btn-outline">Berikutnya ›</button>
+          <label class="page-size-picker">Tampilkan
+            <select id="adsPageSize">
+              <option value="10">10</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+        </section>
+      </section>
+
+      <!-- Modal: Pilih Produk untuk Kampanye (shown mid-import for campaigns
+           never mapped to a product before) -->
+      <div id="campaignMappingModal" class="modal-overlay hidden">
+        <div class="modal-box">
+          <div class="modal-header">
+            <h2>Pilih Produk untuk Kampanye</h2>
+            <button class="modal-close-btn" id="campaignMappingCloseBtn">&times;</button>
+          </div>
+          <p class="hint">
+            Kampanye berikut belum pernah dipetakan ke Produk. Pilih produk
+            untuk kampanye yang mau dipetakan sekarang - boleh dilewati
+            (biarkan "Pilih Produk"), nanti bisa dipetakan lewat panel
+            "Mapping Kampanye ke Produk" di halaman Iklan.
+          </p>
+          <div id="campaignMappingList" class="form-grid"></div>
+          <p id="campaignMappingMsg" class="error-msg"></p>
+          <div class="modal-actions">
+            <button id="campaignMappingConfirmBtn" class="btn-primary">Lanjutkan Impor</button>
+            <button id="campaignMappingCancelBtn" class="btn-outline">Batal</button>
+          </div>
+        </div>
+      </div>
 
       <!-- ================= USERS PAGE ================= -->
       <section id="usersPage" class="page hidden">

@@ -475,6 +475,46 @@ function renderDashboardCharts(stats) {
   ]);
 }
 
+// Local date components (not toISOString, which shifts to UTC and can land
+// on the wrong calendar day depending on the browser's timezone).
+function formatDateInputValue(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Guards the dashFilterFrom/dashFilterTo 'input' listener below from
+// resetting dashFilterQuickRange back to "Kustom" when this function is the
+// one writing those fields, not the user typing into them by hand.
+let isApplyingDashQuickRange = false;
+
+function applyDashQuickRange() {
+  const value = el('dashFilterQuickRange').value;
+  if (value === 'custom') return;
+
+  const today = new Date();
+  let from = today;
+  let to = today;
+  if (value === 'yesterday') {
+    from = new Date(today);
+    from.setDate(from.getDate() - 1);
+    to = from;
+  } else if (value === 'last7') {
+    from = new Date(today);
+    from.setDate(from.getDate() - 6);
+  } else if (value === 'last30') {
+    from = new Date(today);
+    from.setDate(from.getDate() - 29);
+  }
+
+  isApplyingDashQuickRange = true;
+  el('dashFilterFrom').value = formatDateInputValue(from);
+  el('dashFilterTo').value = formatDateInputValue(to);
+  isApplyingDashQuickRange = false;
+  renderDashboard();
+}
+
 async function renderDashboard() {
   el('dashLoadingState').classList.remove('hidden');
   try {
@@ -1734,6 +1774,7 @@ function renderPreOrdersTable() {
   const selectedProducts = getMultiselectSelection('preOrderProduct');
   const notifyStatusFilter = el('preOrderFilterNotifyStatus').value;
   const responseStatusFilter = el('preOrderFilterResponseStatus').value;
+  const anekaFilter = el('preOrderFilterAneka').value;
 
   const filtered = allPreOrders.filter((p) => {
     if (creatorFilter !== 'all' && (p.createdByEmail || '') !== creatorFilter) return false;
@@ -1746,6 +1787,8 @@ function renderPreOrdersTable() {
     if (!withinDateRange(p.orderDate, from, to)) return false;
     if (notifyStatusFilter !== 'all' && preOrderNotifyStatus(p).state !== notifyStatusFilter) return false;
     if (responseStatusFilter !== 'all' && preOrderResponseStatus(p).state !== responseStatusFilter) return false;
+    if (anekaFilter === 'checked' && p.aneka !== true) return false;
+    if (anekaFilter === 'unchecked' && p.aneka === true) return false;
     return true;
   });
 
@@ -2073,6 +2116,372 @@ async function deleteTemplate(id) {
   }
 }
 
+// ---- Ads (Iklan - Meta Ads Manager CSV import) ----
+
+let allAds = [];
+let allAdCampaigns = [];
+let adsPageSize = loadStoredPageSize('ads', 10);
+let adsPage = 1;
+let selectedAdIds = new Set();
+
+const AD_PRODUCT_MULTISELECT = {
+  multi: 'adFilterProductMulti', toggle: 'adFilterProductToggle',
+  panel: 'adFilterProductPanel', all: 'adFilterProductAll',
+};
+
+// AdSpend only stores productId (denormalized from AdCampaignMapping at
+// mapping time), not a product name - resolved against the already-loaded
+// catalog for display/filtering, same as everywhere else product names are
+// shown from an id.
+function adProductName(ad) {
+  const product = allProducts.find((p) => p.id === ad.productId);
+  return product ? product.name : '';
+}
+
+function populateAdStatusSelect(select) {
+  const statuses = Array.from(new Set(allAds.map((a) => a.status).filter(Boolean))).sort();
+  const previousValue = select.value || 'all';
+  select.innerHTML = '<option value="all">Semua Status</option>' +
+    statuses.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+  select.value = statuses.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
+}
+
+function renderAdsStats(filtered) {
+  const totalSpend = filtered.reduce((sum, a) => sum + (a.spend || 0), 0);
+  const totalResults = filtered.reduce((sum, a) => sum + (a.results || 0), 0);
+  const campaignCount = new Set(filtered.map((a) => a.campaignId)).size;
+  el('statAdsTotalSpend').textContent = formatRupiah(totalSpend);
+  el('statAdsTotalCampaigns').textContent = campaignCount;
+  el('statAdsTotalResults').textContent = totalResults;
+}
+
+function renderAdsTable() {
+  populateAdStatusSelect(el('adFilterStatus'));
+  const adProductNames = Array.from(new Set(allAds.map((a) => adProductName(a)).filter(Boolean))).sort();
+  renderMultiselectPanel('adProduct', AD_PRODUCT_MULTISELECT, adProductNames);
+
+  const statusFilter = el('adFilterStatus').value;
+  const from = el('adFilterFrom').value;
+  const to = el('adFilterTo').value;
+  const selectedProducts = getMultiselectSelection('adProduct');
+  const q = el('adSearchBox').value.trim().toLowerCase();
+
+  const filtered = allAds.filter((ad) => {
+    if (statusFilter !== 'all' && (ad.status || '') !== statusFilter) return false;
+    if (selectedProducts.size > 0 && !selectedProducts.has(adProductName(ad))) return false;
+    if (!withinDateRange(ad.date, from, to)) return false;
+    if (q) {
+      const hay = `${ad.campaignName || ''} ${ad.adSetName || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  renderAdsStats(filtered);
+
+  const sorted = filtered.slice().sort((a, b) => {
+    const ta = a.date ? new Date(a.date).getTime() : 0;
+    const tb = b.date ? new Date(b.date).getTime() : 0;
+    return tb - ta;
+  });
+
+  const currentIds = new Set(sorted.map((a) => a.id));
+  Array.from(selectedAdIds).forEach((id) => {
+    if (!currentIds.has(id)) selectedAdIds.delete(id);
+  });
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / adsPageSize));
+  if (adsPage > totalPages) adsPage = totalPages;
+  if (adsPage < 1) adsPage = 1;
+  const pageStart = (adsPage - 1) * adsPageSize;
+  const pageItems = sorted.slice(pageStart, pageStart + adsPageSize);
+
+  el('adsPageInfo').textContent = sorted.length > 0
+    ? `Halaman ${adsPage} dari ${totalPages} (${sorted.length} baris)`
+    : '';
+  el('adsPrevBtn').disabled = adsPage <= 1;
+  el('adsNextBtn').disabled = adsPage >= totalPages;
+
+  const tbody = el('adsTableBody');
+  tbody.innerHTML = '';
+  el('adsEmptyState').classList.toggle('hidden', sorted.length > 0);
+
+  pageItems.forEach((ad) => {
+    const dateDisplay = ad.date
+      ? new Date(ad.date).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '-';
+    const startDisplay = ad.startDate
+      ? new Date(ad.startDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '-';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="checkbox" class="ad-row-checkbox" data-id="${escapeHtml(ad.id)}" ${selectedAdIds.has(ad.id) ? 'checked' : ''} /></td>
+      <td data-col="kampanye">${escapeHtml(ad.campaignName || '-')}</td>
+      <td data-col="setIklan">${escapeHtml(ad.adSetName || '-')}</td>
+      <td data-col="tanggal">${escapeHtml(dateDisplay)}</td>
+      <td data-col="status">${escapeHtml(ad.status || '-')}</td>
+      <td data-col="produk">${escapeHtml(adProductName(ad) || '-')}</td>
+      <td data-col="jangkauan">${escapeHtml(ad.reach ?? '-')}</td>
+      <td data-col="impresi">${escapeHtml(ad.impressions ?? '-')}</td>
+      <td data-col="frekuensi">${escapeHtml(ad.frequency !== undefined && ad.frequency !== null ? Number(ad.frequency).toFixed(2) : '-')}</td>
+      <td data-col="jenisHasil">${escapeHtml(ad.resultType || '-')}</td>
+      <td data-col="hasil">${escapeHtml(ad.results ?? '-')}</td>
+      <td data-col="biaya">${escapeHtml(formatRupiah(ad.spend))}</td>
+      <td data-col="biayaPerHasil">${escapeHtml(formatRupiah(ad.costPerResult))}</td>
+      <td data-col="mulai">${escapeHtml(startDisplay)}</td>
+      <td data-col="berakhir">${escapeHtml(ad.endDate || '-')}</td>
+      <td>
+        <button class="delete-product-btn delete-ad-btn" data-id="${escapeHtml(ad.id)}">Hapus</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll('.ad-row-checkbox').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedAdIds.add(cb.dataset.id);
+      else selectedAdIds.delete(cb.dataset.id);
+      updateAdsSelectionUi();
+    });
+  });
+  tbody.querySelectorAll('.delete-ad-btn').forEach((btn) => {
+    btn.addEventListener('click', () => deleteAd(btn.dataset.id));
+  });
+
+  updateAdsSelectionUi();
+}
+
+function updateAdsSelectionUi() {
+  const count = selectedAdIds.size;
+  el('adsDeleteSelectedBtn').disabled = count === 0;
+  el('adsSelectedCount').textContent = count > 0 ? `${count} dipilih` : '';
+
+  const checkboxes = document.querySelectorAll('.ad-row-checkbox');
+  const checkedCount = Array.from(checkboxes).filter((cb) => cb.checked).length;
+  el('adsSelectAllCheckbox').checked = checkboxes.length > 0 && checkedCount === checkboxes.length;
+  el('adsSelectAllCheckbox').indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+}
+
+async function deleteAd(id) {
+  if (!confirm('Hapus baris data iklan ini? Tindakan ini tidak bisa dibatalkan.')) return;
+  try {
+    await apiDelete(`/api/ads/${id}`);
+    selectedAdIds.delete(id);
+    await loadAds();
+  } catch (e) {
+    handleApiError(e, 'Gagal menghapus data iklan.');
+  }
+}
+
+async function deleteSelectedAds() {
+  const ids = Array.from(selectedAdIds);
+  if (ids.length === 0) return;
+  if (!confirm(`Hapus ${ids.length} baris data iklan yang dipilih? Tindakan ini tidak bisa dibatalkan.`)) return;
+  try {
+    await apiPost('/api/ads/delete', { ids });
+    selectedAdIds.clear();
+    await loadAds();
+  } catch (e) {
+    handleApiError(e, 'Gagal menghapus data iklan.');
+  }
+}
+
+async function loadAds() {
+  el('adsLoadingState').classList.remove('hidden');
+  try {
+    const { ads } = await apiGet('/api/ads');
+    allAds = ads;
+    renderAdsTable();
+  } catch (e) {
+    handleApiError(e, 'Gagal memuat data iklan.');
+  } finally {
+    el('adsLoadingState').classList.add('hidden');
+  }
+}
+
+// ---- Mapping Kampanye ke Produk panel ----
+
+function renderAdCampaignMappingTable() {
+  const tbody = el('adCampaignMappingTableBody');
+  tbody.innerHTML = '';
+  el('adCampaignMappingEmptyState').classList.toggle('hidden', allAdCampaigns.length > 0);
+
+  const sortedProducts = allProducts.slice().sort((a, b) => a.name.localeCompare(b.name));
+  allAdCampaigns
+    .slice()
+    .sort((a, b) => (a.campaignName || '').localeCompare(b.campaignName || ''))
+    .forEach((c) => {
+      const options = sortedProducts
+        .map((p) => `<option value="${escapeHtml(p.id)}" ${p.id === c.productId ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)
+        .join('');
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(c.campaignName || '-')}</td>
+        <td>${escapeHtml(c.campaignId)}</td>
+        <td><select class="campaign-mapping-select" data-campaign-id="${escapeHtml(c.campaignId)}" data-campaign-name="${escapeHtml(c.campaignName || '')}">
+          <option value="">Pilih Produk</option>${options}
+        </select></td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+  tbody.querySelectorAll('.campaign-mapping-select').forEach((select) => {
+    select.addEventListener('change', () => saveAdCampaignMapping(select));
+  });
+}
+
+async function saveAdCampaignMapping(select) {
+  const campaignId = select.dataset.campaignId;
+  const campaignName = select.dataset.campaignName;
+  const productId = select.value;
+  select.disabled = true;
+  try {
+    await apiPut(`/api/ads/campaigns/${campaignId}`, { productId: productId || undefined, campaignName });
+    await Promise.all([loadAdCampaigns(), loadAds()]);
+  } catch (e) {
+    handleApiError(e, 'Gagal menyimpan mapping kampanye.');
+  } finally {
+    select.disabled = false;
+  }
+}
+
+async function loadAdCampaigns() {
+  try {
+    const { campaigns } = await apiGet('/api/ads/campaigns');
+    allAdCampaigns = campaigns;
+    renderAdCampaignMappingTable();
+  } catch (e) {
+    handleApiError(e, 'Gagal memuat daftar kampanye.');
+  }
+}
+
+async function reloadAdsPageData() {
+  await loadProducts();
+  await Promise.all([loadAds(), loadAdCampaigns()]);
+}
+
+// Shows the "Pilih Produk untuk Kampanye" modal for campaigns the dry run
+// found with no existing mapping. Unlike promptProductMapping (order
+// import), leaving a row blank is allowed here - skipped rows stay
+// unmapped and can be picked later from the page's own mapping panel,
+// since ad spend data is still useful to have even before it's linked to
+// a product. Resolves to a { campaignId: {productId, productName,
+// campaignName} } map (only for rows actually filled in), or null on cancel.
+function promptCampaignMapping(campaigns) {
+  return new Promise((resolve) => {
+    const list = el('campaignMappingList');
+    const sortedProducts = allProducts.slice().sort((a, b) => a.name.localeCompare(b.name));
+    list.innerHTML = campaigns.map((c) => {
+      const options = sortedProducts
+        .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`)
+        .join('');
+      return `
+        <label class="form-field" data-campaign-id="${escapeHtml(c.campaignId)}" data-campaign-name="${escapeHtml(c.campaignName || '')}">
+          <span>${escapeHtml(c.campaignName || c.campaignId)}</span>
+          <select><option value="">Pilih Produk</option>${options}</select>
+        </label>`;
+    }).join('');
+    el('campaignMappingMsg').textContent = '';
+    el('campaignMappingModal').classList.remove('hidden');
+
+    const overlay = el('campaignMappingModal');
+    let mouseDownOnBackdrop = false;
+    function onBackdropMouseDown(e) {
+      mouseDownOnBackdrop = e.target === overlay;
+    }
+    function onBackdropClick(e) {
+      if (mouseDownOnBackdrop && e.target === overlay) onCancel();
+      mouseDownOnBackdrop = false;
+    }
+    function cleanup() {
+      overlay.classList.add('hidden');
+      el('campaignMappingConfirmBtn').removeEventListener('click', onConfirm);
+      el('campaignMappingCancelBtn').removeEventListener('click', onCancel);
+      el('campaignMappingCloseBtn').removeEventListener('click', onCancel);
+      overlay.removeEventListener('mousedown', onBackdropMouseDown);
+      overlay.removeEventListener('click', onBackdropClick);
+    }
+    function onConfirm() {
+      const rows = list.querySelectorAll('[data-campaign-id]');
+      const mapping = {};
+      rows.forEach((rowEl) => {
+        const select = rowEl.querySelector('select');
+        if (!select.value) return; // skipped - stays unmapped, can be set later from the mapping panel
+        const option = select.options[select.selectedIndex];
+        mapping[rowEl.dataset.campaignId] = {
+          productId: select.value,
+          productName: option.textContent,
+          campaignName: rowEl.dataset.campaignName,
+        };
+      });
+      cleanup();
+      resolve(mapping);
+    }
+    function onCancel() {
+      cleanup();
+      resolve(null);
+    }
+    el('campaignMappingConfirmBtn').addEventListener('click', onConfirm);
+    el('campaignMappingCancelBtn').addEventListener('click', onCancel);
+    el('campaignMappingCloseBtn').addEventListener('click', onCancel);
+    overlay.addEventListener('mousedown', onBackdropMouseDown);
+    overlay.addEventListener('click', onBackdropClick);
+  });
+}
+
+async function importAds() {
+  const fileInput = el('adImportFile');
+  const file = fileInput.files[0];
+  el('adImportMsg').textContent = '';
+  if (!file) {
+    el('adImportMsg').textContent = 'Pilih file .csv dulu.';
+    return;
+  }
+  el('adImportBtn').disabled = true;
+  try {
+    let progress = createFakeProgress('adImportMsg', 'Memeriksa file...');
+    let preview;
+    try {
+      preview = await apiUploadFile('/api/ads/import?dryRun=true', file);
+    } finally {
+      progress.stop();
+    }
+
+    let campaignMapping;
+    if (preview.unmappedCampaigns && preview.unmappedCampaigns.length > 0) {
+      await loadProducts();
+      campaignMapping = await promptCampaignMapping(preview.unmappedCampaigns);
+      if (!campaignMapping) {
+        el('adImportMsg').textContent = '';
+        return;
+      }
+    }
+
+    progress = createFakeProgress('adImportMsg', 'Mengimpor...');
+    let result;
+    try {
+      result = await apiUploadFile(
+        '/api/ads/import', file,
+        campaignMapping && Object.keys(campaignMapping).length > 0 ? { campaignMapping: JSON.stringify(campaignMapping) } : undefined
+      );
+    } finally {
+      progress.stop();
+    }
+    el('adImportMsg').textContent = `Berhasil mengimpor ${result.imported} baris.`;
+    fileInput.value = '';
+    adsPage = 1;
+    await reloadAdsPageData();
+  } catch (e) {
+    if (e.message === 'unauthorized') {
+      handleApiError(e);
+      return;
+    }
+    el('adImportMsg').textContent = e.message || 'Gagal mengimpor file.';
+  } finally {
+    el('adImportBtn').disabled = false;
+  }
+}
+
 // ---- User management (admin only) ----
 
 function renderUsersTable(users) {
@@ -2158,12 +2567,14 @@ function switchPage(page) {
   el('pesananPage').classList.toggle('hidden', page !== 'pesanan');
   el('praPesananPage').classList.toggle('hidden', page !== 'praPesanan');
   el('templatesPage').classList.toggle('hidden', page !== 'templates');
+  el('iklanPage').classList.toggle('hidden', page !== 'iklan');
   el('usersPage').classList.toggle('hidden', page !== 'users');
   if (page === 'dashboard') renderDashboard();
   if (page === 'produk') loadProducts();
   if (page === 'pesanan') loadOrders();
   if (page === 'praPesanan') reloadPreOrdersPageData();
   if (page === 'templates') loadTemplates();
+  if (page === 'iklan') reloadAdsPageData();
   if (page === 'users') loadUsers();
 }
 
@@ -2292,7 +2703,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderOrdersTable();
   });
   el('preOrdersRefreshBtn').addEventListener('click', reloadPreOrdersPageData);
-  ['preOrderFilterCreator', 'preOrderFilterOwner', 'preOrderFilterFrom', 'preOrderFilterTo', 'preOrderFilterNotifyStatus', 'preOrderFilterResponseStatus'].forEach((id) => {
+  ['preOrderFilterCreator', 'preOrderFilterOwner', 'preOrderFilterFrom', 'preOrderFilterTo', 'preOrderFilterNotifyStatus', 'preOrderFilterResponseStatus', 'preOrderFilterAneka'].forEach((id) => {
     el(id).addEventListener('input', () => {
       preOrdersPage = 1;
       renderPreOrdersTable();
@@ -2343,6 +2754,44 @@ document.addEventListener('DOMContentLoaded', async () => {
   el('orderFormCloseBtn').addEventListener('click', closeOrderFormModal);
   el('orderProductName').addEventListener('change', applyOrderProductPrice);
 
+  el('adsRefreshBtn').addEventListener('click', reloadAdsPageData);
+  el('adImportBtn').addEventListener('click', importAds);
+  ['adFilterStatus', 'adFilterFrom', 'adFilterTo', 'adSearchBox'].forEach((id) => {
+    el(id).addEventListener('input', () => {
+      adsPage = 1;
+      renderAdsTable();
+    });
+  });
+  wireMultiselect('adProduct', AD_PRODUCT_MULTISELECT, () => {
+    adsPage = 1;
+    renderAdsTable();
+  });
+  el('adsPrevBtn').addEventListener('click', () => {
+    adsPage -= 1;
+    renderAdsTable();
+  });
+  el('adsNextBtn').addEventListener('click', () => {
+    adsPage += 1;
+    renderAdsTable();
+  });
+  el('adsPageSize').value = adsPageSize;
+  el('adsPageSize').addEventListener('change', () => {
+    adsPageSize = Number(el('adsPageSize').value) || 10;
+    savePageSize('ads', adsPageSize);
+    adsPage = 1;
+    renderAdsTable();
+  });
+  el('adsSelectAllCheckbox').addEventListener('change', () => {
+    const checked = el('adsSelectAllCheckbox').checked;
+    document.querySelectorAll('.ad-row-checkbox').forEach((cb) => {
+      cb.checked = checked;
+      if (checked) selectedAdIds.add(cb.dataset.id);
+      else selectedAdIds.delete(cb.dataset.id);
+    });
+    updateAdsSelectionUi();
+  });
+  el('adsDeleteSelectedBtn').addEventListener('click', deleteSelectedAds);
+
   el('preOrdersSelectAllCheckbox').addEventListener('change', () => {
     const checked = el('preOrdersSelectAllCheckbox').checked;
     document.querySelectorAll('.preorder-row-checkbox').forEach((cb) => {
@@ -2379,6 +2828,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   ['dashFilterFrom', 'dashFilterTo', 'dashFilterOwner', 'dashFilterCreator'].forEach((id) => {
     el(id).addEventListener('input', renderDashboard);
+  });
+  el('dashFilterQuickRange').addEventListener('change', applyDashQuickRange);
+  // Editing Dari/Sampai by hand no longer matches whatever quick range was
+  // selected (if any) - fall back to "Kustom" so the dropdown doesn't keep
+  // showing a stale label like "7 Hari Terakhir" for a range that's since
+  // been hand-edited away from it.
+  ['dashFilterFrom', 'dashFilterTo'].forEach((id) => {
+    el(id).addEventListener('input', () => {
+      if (!isApplyingDashQuickRange) el('dashFilterQuickRange').value = 'custom';
+    });
   });
 
   el('dashFilterProductToggle').addEventListener('click', (e) => {
@@ -2445,6 +2904,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupColumnVisibility({ tableId: 'productsTable', multiId: 'produkColumnMulti', toggleId: 'produkColumnToggle', panelId: 'produkColumnPanel' });
   setupColumnVisibility({ tableId: 'ordersTable', multiId: 'ordersColumnMulti', toggleId: 'ordersColumnToggle', panelId: 'ordersColumnPanel' });
   setupColumnVisibility({ tableId: 'preOrdersTable', multiId: 'preOrdersColumnMulti', toggleId: 'preOrdersColumnToggle', panelId: 'preOrdersColumnPanel' });
+  setupColumnVisibility({ tableId: 'adsTable', multiId: 'adsColumnMulti', toggleId: 'adsColumnToggle', panelId: 'adsColumnPanel' });
 
   const storedToken = localStorage.getItem(TOKEN_STORAGE);
   if (storedToken) {

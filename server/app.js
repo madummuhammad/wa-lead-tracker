@@ -15,6 +15,8 @@ const Product = require('../models/Product');
 const Order = require('../models/Order');
 const PreOrder = require('../models/PreOrder');
 const MessageTemplate = require('../models/MessageTemplate');
+const AdSpend = require('../models/AdSpend');
+const AdCampaignMapping = require('../models/AdCampaignMapping');
 
 const TOKEN_EXPIRY = '30d'; // personal tool, favor not re-logging-in over short-lived tokens
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -1363,6 +1365,246 @@ function createApp() {
       }
 
       res.json({ ok: true, added, skippedDuplicate, rowsProductUnresolvedSkipped });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // ---- Ads (Meta Ads Manager export - spend/results per campaign per day) ----
+  // Exported as CSV, not xlsx like the other imports. ID Kampanye is an
+  // 18-digit number that overflows Number.MAX_SAFE_INTEGER (2^53-1) - a
+  // generic CSV-to-object parser (ExcelJS's own workbook.csv.read included)
+  // auto-detects it as a number and silently corrupts the last few digits,
+  // which would break every campaign match/upsert keyed on it. This parser
+  // keeps every field a raw string for exactly that reason - only numOrUndefined()
+  // below ever converts anything to a number, and never for campaignId.
+  function parseCsvText(text) {
+    const withoutBom = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+    const rows = [];
+    let row = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < withoutBom.length; i++) {
+      const ch = withoutBom[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (withoutBom[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false;
+        } else {
+          cur += ch;
+        }
+      } else if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        row.push(cur); cur = '';
+      } else if (ch === '\r') {
+        // skip - \n below closes the row
+      } else if (ch === '\n') {
+        row.push(cur); cur = '';
+        rows.push(row); row = [];
+      } else {
+        cur += ch;
+      }
+    }
+    if (cur !== '' || row.length > 0) { row.push(cur); rows.push(row); }
+    return rows;
+  }
+
+  const AD_REQUIRED_HEADERS = ['Nama kampanye', 'Tanggal', 'ID Kampanye'];
+
+  app.post('/api/ads/import', requireAuth, upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'file is required (field name "file")' });
+
+      const rows = parseCsvText(req.file.buffer.toString('utf8'));
+      if (rows.length === 0) return res.status(400).json({ error: 'file is empty' });
+
+      const headerMap = {};
+      rows[0].forEach((h, i) => { headerMap[h.trim()] = i; });
+      const missingHeaders = AD_REQUIRED_HEADERS.filter((h) => !(h in headerMap));
+      if (missingHeaders.length > 0) {
+        return res.status(400).json({ error: `Kolom wajib tidak ditemukan di file: ${missingHeaders.join(', ')}` });
+      }
+      const getCell = (row, header) => {
+        const col = headerMap[header];
+        if (col === undefined) return undefined;
+        const v = row[col];
+        return v === undefined || v === '' ? undefined : v;
+      };
+
+      const dryRun = req.query.dryRun === 'true';
+      let campaignMapping = {};
+      if (req.body.campaignMapping) {
+        try {
+          campaignMapping = JSON.parse(req.body.campaignMapping);
+        } catch (e) {
+          // Malformed mapping just leaves those campaigns unmapped below.
+        }
+      }
+
+      // Every campaign already mapped (from a previous import/edit), plus
+      // whatever this call's campaignMapping adds - a campaign only ever
+      // needs to be mapped once, not re-picked on every import.
+      const existingMappings = await AdCampaignMapping.find({}).lean();
+      const mappingByCampaignId = new Map(existingMappings.map((m) => [m._id, { productId: m.productId, productName: m.campaignName }]));
+      Object.entries(campaignMapping).forEach(([campaignId, m]) => {
+        if (m && m.productId) mappingByCampaignId.set(campaignId, m);
+      });
+
+      const seenCampaigns = new Map(); // campaignId -> campaignName, for the dry-run's unmapped list
+      const adBulkOps = [];
+      const mappingUpsertOps = [];
+      let imported = 0;
+
+      for (let r = 1; r < rows.length; r++) {
+        const row = rows[r];
+        const campaignId = String(getCell(row, 'ID Kampanye') || '').trim();
+        if (!campaignId) continue; // blank/trailing row
+
+        const campaignName = String(getCell(row, 'Nama kampanye') || '').trim();
+        const dateRaw = String(getCell(row, 'Tanggal') || '').trim();
+        if (!dateRaw) continue;
+
+        if (!mappingByCampaignId.has(campaignId)) seenCampaigns.set(campaignId, campaignName);
+
+        if (dryRun) continue; // preview only - no writes below this point
+
+        const mapped = mappingByCampaignId.get(campaignId);
+        const productId = mapped ? mapped.productId : undefined;
+
+        adBulkOps.push({
+          updateOne: {
+            filter: { _id: `${campaignId}_${dateRaw}` },
+            update: {
+              $set: {
+                _id: `${campaignId}_${dateRaw}`,
+                campaignId,
+                campaignName,
+                adSetName: getCell(row, 'Nama set iklan'),
+                date: new Date(dateRaw),
+                status: getCell(row, 'Status Penayangan'),
+                reach: numOrUndefined(getCell(row, 'Jangkauan')),
+                impressions: numOrUndefined(getCell(row, 'Impresi')),
+                frequency: numOrUndefined(getCell(row, 'Frekuensi')),
+                resultType: getCell(row, 'Jenis hasil'),
+                results: numOrUndefined(getCell(row, 'Hasil')),
+                spend: numOrUndefined(getCell(row, 'Jumlah yang dibelanjakan (IDR)')),
+                costPerResult: numOrUndefined(getCell(row, 'Biaya per hasil')),
+                startDate: getCell(row, 'Mulai') ? new Date(getCell(row, 'Mulai')) : undefined,
+                endDate: getCell(row, 'Berakhir'),
+                productId,
+              },
+            },
+            upsert: true,
+          },
+        });
+        imported++;
+      }
+
+      if (dryRun) {
+        const unmappedCampaigns = Array.from(seenCampaigns.entries()).map(([campaignId, campaignName]) => ({ campaignId, campaignName }));
+        return res.json({ dryRun: true, unmappedCampaigns });
+      }
+
+      // Remember any newly-picked mappings for next time, keyed by campaignId
+      // - see the schema comment on AdCampaignMapping for why. campaignName
+      // comes from the client's payload (it already has it from the dry
+      // run's unmappedCampaigns list) rather than `seenCampaigns` here - by
+      // this point campaignMapping has already been merged into
+      // mappingByCampaignId above, so a freshly-mapped campaign's rows are
+      // treated as "already mapped" during the loop and never added to
+      // `seenCampaigns` at all.
+      Object.entries(campaignMapping).forEach(([campaignId, m]) => {
+        if (!m || !m.productId) return;
+        mappingUpsertOps.push({
+          updateOne: {
+            filter: { _id: campaignId },
+            update: { $set: { _id: campaignId, campaignName: m.campaignName, productId: m.productId } },
+            upsert: true,
+          },
+        });
+      });
+
+      if (mappingUpsertOps.length > 0) await AdCampaignMapping.bulkWrite(mappingUpsertOps);
+      if (adBulkOps.length > 0) await AdSpend.bulkWrite(adBulkOps);
+
+      res.json({ ok: true, imported });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.get('/api/ads', requireAuth, async (req, res) => {
+    try {
+      const docs = await AdSpend.find({}).sort({ date: -1 }).lean();
+      const ads = docs.map(({ _id, __v, ...rest }) => ({ id: _id, ...rest }));
+      res.json({ ads });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.delete('/api/ads/:id', requireAuth, async (req, res) => {
+    try {
+      await AdSpend.findByIdAndDelete(req.params.id);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  app.post('/api/ads/delete', requireAuth, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+      await AdSpend.deleteMany({ _id: { $in: ids } });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // Every distinct campaign seen in AdSpend, joined with its mapping (if
+  // any) - drives the Iklan page's "Mapping Kampanye ke Produk" panel, which
+  // needs to show campaigns with no product picked yet too, not just mapped ones.
+  app.get('/api/ads/campaigns', requireAuth, async (req, res) => {
+    try {
+      const [mappings, distinctCampaigns] = await Promise.all([
+        AdCampaignMapping.find({}).lean(),
+        AdSpend.aggregate([{ $group: { _id: '$campaignId', campaignName: { $last: '$campaignName' } } }]),
+      ]);
+      const mappingById = new Map(mappings.map((m) => [m._id, m]));
+      const campaigns = distinctCampaigns.map((c) => {
+        const mapping = mappingById.get(c._id);
+        return {
+          campaignId: c._id,
+          campaignName: mapping ? mapping.campaignName : c.campaignName,
+          productId: mapping ? mapping.productId : undefined,
+        };
+      });
+      res.json({ campaigns });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // Sets/changes/clears one campaign's product link - applies retroactively
+  // to every AdSpend row already imported for it, not just future imports,
+  // so correcting a wrong mapping doesn't leave old rows pointing the old way.
+  app.put('/api/ads/campaigns/:campaignId', requireAuth, async (req, res) => {
+    try {
+      const { productId, campaignName } = req.body || {};
+      const campaignId = req.params.campaignId;
+      if (productId) {
+        await AdCampaignMapping.findByIdAndUpdate(
+          campaignId,
+          { $set: { _id: campaignId, campaignName, productId } },
+          { upsert: true }
+        );
+        await AdSpend.updateMany({ campaignId }, { $set: { productId } });
+      } else {
+        await AdCampaignMapping.findByIdAndDelete(campaignId);
+        await AdSpend.updateMany({ campaignId }, { $unset: { productId: '' } });
+      }
+      res.json({ ok: true });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }
