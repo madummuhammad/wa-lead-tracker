@@ -1697,6 +1697,15 @@ function createApp() {
   app.get('/api/laporan/stats', requireAuth, async (req, res) => {
     try {
       const { from, to } = req.query;
+      // 'order' (default) filters orders by their own createdDate ("Tanggal
+      // Dibuat" from the COD platform export); 'lead' filters by the first
+      // time the customer's chat came in instead (Chat.firstMessageDate),
+      // via the same customerPhone <-> Chat._id link the order-import route
+      // already uses to create/match a Chat for each order. Useful for
+      // seeing revenue by when the lead originated rather than when the
+      // order was placed - a lead from June that only converted in July
+      // shows up under June with this basis, not July.
+      const dateBasis = req.query.dateBasis === 'lead' ? 'lead' : 'order';
       const ownerNumber = req.query.ownerNumber && req.query.ownerNumber !== 'all' ? req.query.ownerNumber : null;
       const productNames = (Array.isArray(req.query.productName) ? req.query.productName : req.query.productName ? [req.query.productName] : [])
         .filter((p) => p && p !== 'all');
@@ -1724,10 +1733,17 @@ function createApp() {
         AdSpend.find({}).lean(),
       ]);
 
+      // Chat._id is the same phone digits as Order.customerPhone - the order
+      // import route creates/matches a Chat by that exact value - so this
+      // lookup needs no extra normalization.
+      const chatByPhone = new Map(chats.map((c) => [c._id, c]));
+      const orderDateForFilter = (o) =>
+        dateBasis === 'lead' ? chatByPhone.get(o.customerPhone)?.firstMessageDate : o.createdDate;
+
       const filteredOrders = orders.filter((o) =>
         (!ownerNumber || (o.ownerNumber || '') === ownerNumber) &&
         (productNames.length === 0 || productNames.includes(o.productName || '')) &&
-        withinDateFilter(o.createdDate)
+        withinDateFilter(orderDateForFilter(o))
       );
       // Same formula as the Dashboard/Pesanan Omset cards - Nilai COD minus
       // Ongkos Kirim minus Biaya COD, excluding cancelled orders.
@@ -1743,6 +1759,9 @@ function createApp() {
 
       // AdSpend has no ownerNumber of its own - only date and product (via
       // the campaign->product mapping already stamped onto each row) apply.
+      // Also always filtered by its own a.date regardless of dateBasis - it's
+      // a campaign-level daily spend row, not tied to any single customer/
+      // lead, so "tanggal lead" has no equivalent meaning for it.
       const productIdsByName = new Set(
         productNames.length > 0
           ? products.filter((p) => productNames.includes(p.name)).map((p) => String(p._id))
@@ -1784,10 +1803,10 @@ function createApp() {
       }, 0);
       const realizedProfit = realizedProfitFromOrders - totalBiayaIklan;
 
-      // ---- Per-provinsi breakdown (Order.province - "Provinsi" penerima
-      // dari file impor Pesanan) - jumlah pesanan dan return rate, dua-duanya
-      // dari filteredOrders yang sama (ikut filter owner/produk/tanggal di
-      // atas), jadi konsisten dengan card-card lain di halaman ini.
+      // ---- Per-provinsi return rate (Order.province - "Provinsi" penerima
+      // dari file impor Pesanan), dari filteredOrders yang sama (ikut filter
+      // owner/produk/tanggal di atas), jadi konsisten dengan card-card lain
+      // di halaman ini.
       const provinceMap = new Map();
       filteredOrders.forEach((o) => {
         const province = o.province || '(Tidak Diketahui)';
@@ -1796,9 +1815,6 @@ function createApp() {
         if (o.status === 'Return') entry.returnCount += 1;
         provinceMap.set(province, entry);
       });
-      const ordersByProvince = Array.from(provinceMap.values())
-        .map((e) => ({ province: e.province, count: e.count }))
-        .sort((a, b) => b.count - a.count);
       const returnRateByProvince = Array.from(provinceMap.values())
         .map((e) => ({
           province: e.province,
@@ -1808,12 +1824,15 @@ function createApp() {
         }))
         .sort((a, b) => b.rate - a.rate);
 
-      // Same shape/source as Dashboard's own filterOptions, from the
-      // *unfiltered* data so the dropdowns always show every possibility.
+      // Product options deliberately exclude Chat.product - that field is a
+      // free-text label set per-chat from the extension and drifts from the
+      // Product master (renamed/discontinued products, typos), which polluted
+      // this filter with names that never appear in an actual Order/PreOrder.
+      // Owners still come from Chat since Order/PreOrder don't always carry
+      // ownerNumber consistently.
       const filterOptions = {
         owners: Array.from(new Set(chats.map((c) => c.ownerNumber).filter(Boolean))).sort(),
         products: Array.from(new Set([
-          ...chats.map((c) => c.product),
           ...orders.map((o) => o.productName),
           ...preOrders.map((p) => p.productName),
         ].filter(Boolean))).sort(),
@@ -1822,7 +1841,6 @@ function createApp() {
 
       res.json({
         cards: { totalOmset, totalHpp, totalBiayaIklan, totalProfit, realizedProfit },
-        ordersByProvince,
         returnRateByProvince,
         filterOptions,
       });

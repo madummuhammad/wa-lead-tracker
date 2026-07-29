@@ -353,6 +353,7 @@ body {
 .multiselect-panel.hidden { display: none; }
 .multiselect-panel .multiselect-option {
   display: flex;
+  flex-direction: row; /* .filters label sets column - override it here */
   align-items: flex-start;
   gap: 10px;
   padding: 7px 8px;

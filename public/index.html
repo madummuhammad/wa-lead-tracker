@@ -258,6 +258,12 @@
           <label>Sampai
             <input type="date" id="laporanFilterTo" />
           </label>
+          <label>Berdasarkan Tanggal
+            <select id="laporanFilterDateBasis">
+              <option value="order">Tanggal Order</option>
+              <option value="lead">Tanggal Lead</option>
+            </select>
+          </label>
           <label>Akun WA
             <select id="laporanFilterOwner">
               <option value="all">Semua akun</option>
@@ -310,24 +316,6 @@
         </section>
 
         <section class="block">
-          <h2>Jumlah Pesanan per Provinsi</h2>
-          <p class="hint">Diurutkan dari yang paling banyak.</p>
-          <section class="table-wrap scroll-x">
-            <table id="laporanProvinceOrdersTable">
-              <thead>
-                <tr>
-                  <th>No.</th>
-                  <th class="sortable-col" data-sort-key="province">Provinsi</th>
-                  <th class="sortable-col" data-sort-key="count">Jumlah Pesanan</th>
-                </tr>
-              </thead>
-              <tbody id="laporanProvinceOrdersTableBody"></tbody>
-            </table>
-            <div id="laporanProvinceOrdersEmptyState" class="notice hidden">Belum ada data.</div>
-          </section>
-        </section>
-
-        <section class="block">
           <h2>Return Rate per Provinsi</h2>
           <p class="hint">Diurutkan dari yang paling tinggi return rate-nya.</p>
           <section class="table-wrap scroll-x">
@@ -345,6 +333,16 @@
             </table>
             <div id="laporanProvinceReturnEmptyState" class="notice hidden">Belum ada data.</div>
           </section>
+          <label class="page-size-picker">Tampilkan
+            <select id="laporanProvinceReturnPageSize">
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="all">Semua</option>
+            </select>
+            baris
+          </label>
         </section>
 
         <div id="laporanLoadingState" class="notice hidden">Memuat data dari MongoDB...</div>

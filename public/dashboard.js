@@ -2550,22 +2550,28 @@ function renderLaporanCards(cards) {
   el('statLaporanRealizedProfit').textContent = formatSignedRupiah(cards.realizedProfit);
 }
 
-function renderLaporanProvinceOrdersRows(ordersByProvince) {
-  const tbody = el('laporanProvinceOrdersTableBody');
-  tbody.innerHTML = (ordersByProvince || [])
-    .map((p, i) => `
-      <tr>
-        <td>${i + 1}</td>
-        <td>${escapeHtml(p.province)}</td>
-        <td>${escapeHtml(p.count)}</td>
-      </tr>`)
-    .join('');
-  el('laporanProvinceOrdersEmptyState').classList.toggle('hidden', (ordersByProvince || []).length > 0);
+// "Tampilkan" row-limit picker for the ranked table - same localStorage key
+// as the Pesanan/Pra-Pesanan pagination page-size pickers, just capping how
+// many (already-sorted) rows render instead of paging through them, since
+// this is a ranking list, not a browseable log. Needs its own loader (not
+// loadStoredPageSize) because "all" isn't a number - that helper coerces
+// everything with Number(), which would silently turn "all" into the fallback.
+function loadLaporanProvinceReturnPageSize() {
+  try {
+    const store = JSON.parse(localStorage.getItem(PAGE_SIZE_STORAGE) || '{}');
+    const stored = store.laporanProvinceReturn;
+    return stored === 'all' ? 'all' : (Number(stored) || 10);
+  } catch (e) {
+    return 10;
+  }
 }
+let laporanProvinceReturnPageSize = loadLaporanProvinceReturnPageSize();
 
 function renderLaporanProvinceReturnRows(returnRateByProvince) {
+  const all = returnRateByProvince || [];
+  const limited = laporanProvinceReturnPageSize === 'all' ? all : all.slice(0, laporanProvinceReturnPageSize);
   const tbody = el('laporanProvinceReturnTableBody');
-  tbody.innerHTML = (returnRateByProvince || [])
+  tbody.innerHTML = limited
     .map((p, i) => `
       <tr>
         <td>${i + 1}</td>
@@ -2575,7 +2581,7 @@ function renderLaporanProvinceReturnRows(returnRateByProvince) {
         <td>${escapeHtml(p.rate)}%</td>
       </tr>`)
     .join('');
-  el('laporanProvinceReturnEmptyState').classList.toggle('hidden', (returnRateByProvince || []).length > 0);
+  el('laporanProvinceReturnEmptyState').classList.toggle('hidden', all.length > 0);
 }
 
 // Generic click-to-sort for a ranking table's <thead> - th.sortable-col
@@ -2625,19 +2631,18 @@ function setupSortableTable({ tableId, defaultKey, defaultDir, onRender }) {
   });
 
   applySort();
-  return { update(newData) { state.data = newData || []; applySort(); } };
+  return {
+    update(newData) { state.data = newData || []; applySort(); },
+    // Re-renders with the same data/sort - used when something outside the
+    // sort itself changes what onRender should show (e.g. the "Tampilkan"
+    // row-limit picker), so it doesn't need its own copy of the sorted data.
+    refresh() { applySort(); },
+  };
 }
 
-let laporanProvinceOrdersSortCtrl = null;
 let laporanProvinceReturnSortCtrl = null;
 
 function initLaporanProvinceTables() {
-  laporanProvinceOrdersSortCtrl = setupSortableTable({
-    tableId: 'laporanProvinceOrdersTable',
-    defaultKey: 'count',
-    defaultDir: 'desc',
-    onRender: renderLaporanProvinceOrdersRows,
-  });
   laporanProvinceReturnSortCtrl = setupSortableTable({
     tableId: 'laporanProvinceReturnTable',
     defaultKey: 'rate',
@@ -2652,10 +2657,12 @@ async function renderLaporan() {
     const params = new URLSearchParams();
     const from = el('laporanFilterFrom').value;
     const to = el('laporanFilterTo').value;
+    const dateBasis = el('laporanFilterDateBasis').value;
     const owner = el('laporanFilterOwner').value;
     const creator = el('laporanFilterCreator').value;
     if (from) params.set('from', from);
     if (to) params.set('to', to);
+    if (dateBasis && dateBasis !== 'order') params.set('dateBasis', dateBasis);
     if (owner && owner !== 'all') params.set('ownerNumber', owner);
     getMultiselectSelection('laporanProduct').forEach((p) => params.append('productName', p));
     if (creator && creator !== 'all') params.set('createdByEmail', creator);
@@ -2665,7 +2672,6 @@ async function renderLaporan() {
     populateDashboardFilterSelect(el('laporanFilterCreator'), stats.filterOptions.creators, 'Semua CS');
     renderMultiselectPanel('laporanProduct', LAPORAN_PRODUCT_MULTISELECT, stats.filterOptions.products);
     renderLaporanCards(stats.cards);
-    laporanProvinceOrdersSortCtrl.update(stats.ordersByProvince);
     laporanProvinceReturnSortCtrl.update(stats.returnRateByProvince);
   } catch (e) {
     handleApiError(e, 'Gagal memuat data laporan.');
@@ -2988,6 +2994,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   el('laporanRefreshBtn').addEventListener('click', renderLaporan);
   el('laporanFilterQuickRange').addEventListener('change', applyLaporanQuickRange);
+  el('laporanFilterDateBasis').addEventListener('change', renderLaporan);
   ['laporanFilterOwner', 'laporanFilterCreator', 'laporanFilterFrom', 'laporanFilterTo'].forEach((id) => {
     el(id).addEventListener('input', renderLaporan);
   });
@@ -3112,6 +3119,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupColumnVisibility({ tableId: 'preOrdersTable', multiId: 'preOrdersColumnMulti', toggleId: 'preOrdersColumnToggle', panelId: 'preOrdersColumnPanel' });
   setupColumnVisibility({ tableId: 'adsTable', multiId: 'adsColumnMulti', toggleId: 'adsColumnToggle', panelId: 'adsColumnPanel' });
   initLaporanProvinceTables();
+  el('laporanProvinceReturnPageSize').value = laporanProvinceReturnPageSize;
+  el('laporanProvinceReturnPageSize').addEventListener('change', () => {
+    const raw = el('laporanProvinceReturnPageSize').value;
+    laporanProvinceReturnPageSize = raw === 'all' ? 'all' : Number(raw) || 10;
+    savePageSize('laporanProvinceReturn', laporanProvinceReturnPageSize);
+    laporanProvinceReturnSortCtrl.refresh();
+  });
 
   const storedToken = localStorage.getItem(TOKEN_STORAGE);
   if (storedToken) {
