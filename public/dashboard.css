@@ -410,11 +410,15 @@ body {
 .stat-preorder .stat-icon { background: #e8f0fe; color: #2e6fdb; }
 .stat-ongkir .stat-icon { background: #fdeecb; color: #946200; }
 .stat-codfee .stat-icon { background: var(--danger-tint); color: var(--danger); }
+.stat-profit .stat-icon { background: var(--brand-tint); color: var(--brand); }
 .stat-card .hint { margin-top: 8px; }
 
 .stats-substatus-heading { font-size: 15px; margin: 0 0 10px; }
-.stats-status-omset { margin-bottom: 16px; }
+.stats-status-omset, .stats-status-profit { margin-bottom: 16px; }
 .stat-status-omset { background: #e6f6f3; border-color: #bfe6de; }
+.stat-status-profit { background: #e6f6f3; border-color: #bfe6de; }
+.stat-status-profit.stat-status-profit--negative { background: var(--danger-tint); border-color: #f3c9c9; }
+.stat-status-profit--negative .stat-value { color: var(--danger); }
 .stat-value { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; }
 .stat-label { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; }
 

@@ -37,6 +37,7 @@ const preOrderSchema = new mongoose.Schema(
     productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
     qty: Number,
     unitPrice: Number, // Harga Satuan
+    hpp: Number, // Harga Pokok Penjualan - snapshot dari Product.hpp saat pre-order dibuat, independen dari master
     totalPrice: Number, // Total Harga
     shippingCost: Number, // Ongkir
     totalBill: Number, // Total Tagihan

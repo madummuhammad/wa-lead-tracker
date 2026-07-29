@@ -22,6 +22,7 @@ const orderSchema = new mongoose.Schema(
     codDiscount: Number, // Diskon COD
     codFee: Number, // Biaya COD
     price: Number, // Harga Produk (unit price for this order, independent of the master Product price)
+    hpp: Number, // Harga Pokok Penjualan - snapshot dari Product.hpp saat order dibuat, independen dari master (lihat komentar price di atas)
     codValue: Number, // Nilai COD
     status: String, // Status
     trackingNumber: String, // Resi

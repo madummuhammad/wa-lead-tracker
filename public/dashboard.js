@@ -394,8 +394,31 @@ function renderOmsetByStatusCards(omsetByStatus) {
     .join('');
 }
 
+// Rp prefix stays before the sign (e.g. "-Rp 5.500") rather than after it
+// (formatRupiah alone would print "Rp -5.500") - only used where a negative
+// value is actually possible (profit cards), everything else keeps formatRupiah.
+function formatSignedRupiah(value) {
+  const num = Number(value || 0);
+  return `${num < 0 ? '-' : ''}Rp ${Math.abs(num).toLocaleString('id-ID')}`;
+}
+
+// Satu card profit per status pesanan - sama polanya dengan
+// renderOmsetByStatusCards, ditambah highlight merah kalau profitnya negatif
+// (status Return, yang dihitung rugi penuh - lihat komentar di app.js).
+function renderProfitByStatusCards(profitByStatus) {
+  el('statusProfitStats').innerHTML = (profitByStatus || [])
+    .map((s) => `
+      <div class="stat-card stat-status-profit${s.profit < 0 ? ' stat-status-profit--negative' : ''}">
+        <div class="stat-value">${escapeHtml(formatSignedRupiah(s.profit))}</div>
+        <div class="stat-label">${escapeHtml(s.label)}</div>
+        <p class="hint">${escapeHtml(s.count)} pesanan</p>
+      </div>`)
+    .join('');
+}
+
 function renderDashboardCards(cards) {
   el('statOmset').textContent = formatRupiah(cards.totalOmset);
+  el('statTotalProfit').textContent = formatSignedRupiah(cards.totalProfit);
   el('statTotalOngkir').textContent = formatRupiah(cards.totalOngkir);
   el('statTotalBiayaCod').textContent = formatRupiah(cards.totalBiayaCod);
   el('statTotalPesanan').textContent = cards.totalPesanan;
@@ -468,6 +491,7 @@ async function renderDashboard() {
     populateDashboardFilterSelect(el('dashFilterCreator'), stats.filterOptions.creators, 'Semua CS');
     renderDashboardCards(stats.cards);
     renderOmsetByStatusCards(stats.omsetByStatus);
+    renderProfitByStatusCards(stats.profitByStatus);
     renderDashboardCharts(stats);
   } catch (e) {
     handleApiError(e, 'Gagal memuat statistik dashboard.');
@@ -687,6 +711,7 @@ function renderProductsTable() {
         <td data-col="sku">${escapeHtml(product.sku || '-')}</td>
         <td data-col="alamatGudang">${escapeHtml(product.warehouseAddress || '-')}</td>
         <td data-col="harga">${escapeHtml(formatRupiah(product.price))}</td>
+        <td data-col="hpp">${escapeHtml(formatRupiah(product.hpp))}</td>
         ${dimCells}
         <td>
           <button class="edit-product-btn" data-id="${escapeHtml(product.id)}">Edit</button>
@@ -734,6 +759,7 @@ function resetProductForm() {
   el('productSku').value = '';
   el('productWarehouseAddress').value = '';
   el('productPrice').value = '';
+  el('productHpp').value = '';
   PRODUCT_DIM_FIELDS.forEach((field) => { el(`product${capitalize(field)}`).value = ''; });
   editingProductId = null;
   el('productFormTitle').textContent = 'Tambah Produk Baru';
@@ -759,6 +785,7 @@ function startEditProduct(id) {
   el('productSku').value = product.sku || '';
   el('productWarehouseAddress').value = product.warehouseAddress || '';
   el('productPrice').value = product.price ?? '';
+  el('productHpp').value = product.hpp ?? '';
   PRODUCT_DIM_FIELDS.forEach((field) => { el(`product${capitalize(field)}`).value = product[field] ?? ''; });
   editingProductId = id;
   el('productFormTitle').textContent = 'Edit Produk';
@@ -782,11 +809,13 @@ async function saveProduct() {
     const val = el(`product${capitalize(field)}`).value;
     if (val !== '') dims[field] = Number(val);
   });
+  const hppRaw = el('productHpp').value;
+  const hpp = hppRaw !== '' ? Number(hppRaw) : undefined;
 
   try {
     if (editingProductId) {
       const sku = el('productSku').value.trim();
-      await apiPut(`/api/products/${editingProductId}`, { name, sku, warehouseAddress, price: Number(price), ...dims });
+      await apiPut(`/api/products/${editingProductId}`, { name, sku, warehouseAddress, price: Number(price), hpp, ...dims });
     } else {
       const skuPart1 = el('productSkuPart1').value.trim();
       const skuPart2 = el('productSkuPart2').value.trim();
@@ -794,7 +823,7 @@ async function saveProduct() {
         el('productFormMsg').textContent = 'Isi Kode SKU 1 dan Kode SKU 2 (keduanya wajib).';
         return;
       }
-      await apiPost('/api/products', { name, skuPart1, skuPart2, warehouseAddress, price: Number(price), ...dims });
+      await apiPost('/api/products', { name, skuPart1, skuPart2, warehouseAddress, price: Number(price), hpp, ...dims });
     }
     closeProductFormModal();
     await loadProducts();
@@ -926,6 +955,7 @@ function renderOrdersTable() {
       <td data-col="diskonCod">${escapeHtml(formatRupiah(order.codDiscount))}</td>
       <td data-col="biayaCod">${escapeHtml(formatRupiah(order.codFee))}</td>
       <td data-col="harga">${escapeHtml(formatRupiah((order.codValue || 0) - (order.shippingCost || 0)))}</td>
+      <td data-col="hpp">${escapeHtml(formatRupiah(order.hpp))}</td>
       <td data-col="nilaiCod">${escapeHtml(formatRupiah(order.codValue))}</td>
       <td data-col="status">${escapeHtml(order.status || '-')}</td>
       <td data-col="resi">${escapeHtml(order.trackingNumber || '-')}</td>
@@ -1050,6 +1080,7 @@ const ORDER_FORM_TEXT_FIELDS = [
   ['orderVolume', 'volume'],
   ['orderVariant', 'variant'],
   ['orderPrice', 'price'],
+  ['orderHpp', 'hpp'],
   ['orderShippingCost', 'shippingCost'],
   ['orderCodDiscount', 'codDiscount'],
   ['orderCodFee', 'codFee'],
@@ -1089,6 +1120,9 @@ function applyOrderProductPrice() {
   const product = allProducts.find((p) => p.name === el('orderProductName').value);
   if (product && product.price !== undefined && product.price !== null) {
     el('orderPrice').value = product.price;
+  }
+  if (product && product.hpp !== undefined && product.hpp !== null) {
+    el('orderHpp').value = product.hpp;
   }
 }
 
@@ -1375,6 +1409,9 @@ function applyPreOrderProductPrice() {
   if (product && product.price !== undefined && product.price !== null) {
     el('preOrderUnitPrice').value = product.price;
   }
+  if (product && product.hpp !== undefined && product.hpp !== null) {
+    el('preOrderHpp').value = product.hpp;
+  }
   recalcPreOrderTotals();
 }
 
@@ -1453,6 +1490,7 @@ const PREORDER_FORM_TEXT_FIELDS = [
   ['preOrderProductName', 'productName'],
   ['preOrderQty', 'qty'],
   ['preOrderUnitPrice', 'unitPrice'],
+  ['preOrderHpp', 'hpp'],
   ['preOrderTotalPrice', 'totalPrice'],
   ['preOrderShippingCost', 'shippingCost'],
   ['preOrderTotalBill', 'totalBill'],
@@ -1759,6 +1797,7 @@ function renderPreOrdersTable() {
       <td data-col="produk">${escapeHtml(preOrder.productName ? formatProductLabelWithSku(preOrder.productName) : '-')}</td>
       <td data-col="qty">${escapeHtml(preOrder.qty ?? '-')}</td>
       <td data-col="hargaSatuan">${escapeHtml(formatRupiah(preOrder.unitPrice))}</td>
+      <td data-col="hpp">${escapeHtml(formatRupiah(preOrder.hpp))}</td>
       <td data-col="totalHarga">${escapeHtml(formatRupiah(preOrder.totalPrice))}</td>
       <td data-col="ongkir">${escapeHtml(formatRupiah(preOrder.shippingCost))}</td>
       <td data-col="totalTagihan">${escapeHtml(formatRupiah(preOrder.totalBill))}</td>

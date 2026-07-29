@@ -20,6 +20,7 @@ const productSchema = new mongoose.Schema(
     // filled in later by the admin. The manual "Tambah Produk Baru" form
     // still requires price - that's enforced in the route handlers below.
     price: { type: Number, min: 0 },
+    hpp: { type: Number, min: 0 }, // Harga Pokok Penjualan - modal per unit, optional (belum tentu semua produk diisi)
     weight: { type: Number, min: 0 }, // gram
     volume: { type: Number, min: 0 }, // cm3
     length: { type: Number, min: 0 }, // cm

@@ -279,8 +279,18 @@ function createApp() {
   }
 
   function serializeProduct(doc) {
-    const { _id, name, sku, warehouseAddress, price, weight, volume, length, width, height } = doc;
-    return { id: _id, name, sku, warehouseAddress, price, weight, volume, length, width, height };
+    const { _id, name, sku, warehouseAddress, price, hpp, weight, volume, length, width, height } = doc;
+    return { id: _id, name, sku, warehouseAddress, price, hpp, weight, volume, length, width, height };
+  }
+
+  // HPP is optional (unlike price) - a product can exist before its cost
+  // price is known, same reasoning as the dimension fields above.
+  function parseHpp(body) {
+    const raw = body.hpp;
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    const num = Number(raw);
+    if (!Number.isFinite(num) || num < 0) throw new Error('hpp must be a non-negative number');
+    return num;
   }
 
   // "{part1}-{part2}" + the smallest sequence number (starting at 1, no
@@ -326,8 +336,10 @@ function createApp() {
         return res.status(400).json({ error: 'Kode SKU bagian 2 wajib diisi' });
       }
       let dims;
+      let hpp;
       try {
         dims = parseProductDimensions(req.body || {});
+        hpp = parseHpp(req.body || {});
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }
@@ -335,6 +347,7 @@ function createApp() {
       const product = await Product.create({
         name: name.trim(),
         price: priceNum,
+        hpp,
         sku,
         warehouseAddress: warehouseAddress && String(warehouseAddress).trim() ? String(warehouseAddress).trim() : undefined,
         ...dims,
@@ -356,8 +369,10 @@ function createApp() {
         return res.status(400).json({ error: 'price must be a non-negative number' });
       }
       let dims;
+      let hpp;
       try {
         dims = parseProductDimensions(req.body || {});
+        hpp = parseHpp(req.body || {});
       } catch (e) {
         return res.status(400).json({ error: e.message });
       }
@@ -380,10 +395,12 @@ function createApp() {
       });
       if (!skuTrimmed) unset.sku = '';
       if (!warehouseTrimmed) unset.warehouseAddress = '';
+      if (hpp === undefined) unset.hpp = '';
 
       const set = { name: name.trim(), price: priceNum, ...dims };
       if (skuTrimmed) set.sku = skuTrimmed;
       if (warehouseTrimmed) set.warehouseAddress = warehouseTrimmed;
+      if (hpp !== undefined) set.hpp = hpp;
 
       const update = { $set: set };
       if (Object.keys(unset).length > 0) update.$unset = unset;
@@ -549,6 +566,7 @@ function createApp() {
             codDiscount: numOrUndefined(body.codDiscount),
             codFee: numOrUndefined(body.codFee),
             price: numOrUndefined(body.price),
+            hpp: numOrUndefined(body.hpp),
             codValue: numOrUndefined(body.codValue),
             status: body.status,
             trackingNumber: body.trackingNumber,
@@ -560,6 +578,22 @@ function createApp() {
             warehouseAdminName: body.warehouseAdminName,
             ownerNumber: body.ownerNumber,
             zipcode: body.zipcode,
+            regency: body.regency,
+            district: body.district,
+            province: body.province,
+            variant: body.variant,
+            problem: body.problem,
+            returnDate: body.returnDate ? new Date(body.returnDate) : undefined,
+            returnToSellerDate: body.returnToSellerDate ? new Date(body.returnToSellerDate) : undefined,
+            csName: body.csName,
+            pickupType: body.pickupType,
+            pickupTime: body.pickupTime,
+            insurance: body.insurance,
+            originalShippingCost: numOrUndefined(body.originalShippingCost),
+            senderDistrict: body.senderDistrict,
+            senderRegency: body.senderRegency,
+            senderProvince: body.senderProvince,
+            senderAddress: body.senderAddress,
           },
         },
         { new: true }
@@ -659,6 +693,13 @@ function createApp() {
         return v;
       };
 
+      // HPP is looked up by productId regardless of which of the three ways
+      // below resolved it (matched PreOrder, exact catalog name, or the
+      // admin's productMapping) - none of those paths carry hpp themselves.
+      const productHppById = new Map(
+        (await Product.find({}, 'hpp').lean()).map((p) => [String(p._id), p.hpp])
+      );
+
       const dryRun = req.query.dryRun === 'true';
       const onlyMatched = req.query.onlyMatched === 'true';
       let productMapping = {};
@@ -689,9 +730,12 @@ function createApp() {
       // `chatCache`) instead of one Chat.findById per row, same reasoning as
       // the bulk writes above.
       const allPhones = new Set();
+      const allNoOrders = new Set();
       for (let r = 2; r <= worksheet.rowCount; r++) {
         const row = worksheet.getRow(r);
-        if (!String(getCell(row, 'No. Order') || '').trim()) continue;
+        const noOrderPrescan = String(getCell(row, 'No. Order') || '').trim();
+        if (!noOrderPrescan) continue;
+        allNoOrders.add(noOrderPrescan);
         const phone = onlyDigits(getCell(row, 'No. HP Penerima'));
         if (phone) allPhones.add(phone);
       }
@@ -699,6 +743,15 @@ function createApp() {
         ? await Chat.find({ _id: { $in: Array.from(allPhones) } }).lean()
         : [];
       const chatCache = new Map(existingChats.map((c) => [c._id, c])); // phone -> chat doc (plain object, not a live Mongoose doc)
+
+      // HPP is frozen once set - re-importing (e.g. a later export of the
+      // same order, or the same file again) must never overwrite it just
+      // because the master Product's hpp changed since. Only orders that
+      // don't already have an hpp value get one filled in below.
+      const existingOrderHpp = allNoOrders.size > 0
+        ? await Order.find({ _id: { $in: Array.from(allNoOrders) }, hpp: { $exists: true, $ne: null } }, 'hpp').lean()
+        : [];
+      const existingOrderHppIds = new Set(existingOrderHpp.map((o) => o._id));
 
       let ordersImported = 0;
       let contactsCreated = 0;
@@ -823,6 +876,9 @@ function createApp() {
                 // the real per-order price ends up in "Nilai COD" instead.
                 // Prefer "Harga Produk" when a future export does fill it in.
                 price: numOrUndefined(getCell(row, 'Harga Produk')) ?? numOrUndefined(getCell(row, 'Nilai COD')),
+                hpp: existingOrderHppIds.has(noOrder)
+                  ? undefined // already frozen - don't let a re-import refresh it to a since-changed master hpp
+                  : (resolvedProduct.productId ? productHppById.get(String(resolvedProduct.productId)) : undefined),
                 codValue: numOrUndefined(getCell(row, 'Nilai COD')),
                 status,
                 trackingNumber,
@@ -978,6 +1034,7 @@ function createApp() {
       address: body.address,
       qty: numOrUndefined(body.qty),
       unitPrice: numOrUndefined(body.unitPrice),
+      hpp: numOrUndefined(body.hpp),
       totalPrice: numOrUndefined(body.totalPrice),
       shippingCost: numOrUndefined(body.shippingCost),
       totalBill: numOrUndefined(body.totalBill),
@@ -1200,6 +1257,12 @@ function createApp() {
       // Skipped during dryRun since nothing is actually being created yet.
       const importerCreator = dryRun ? {} : await resolvePreOrderCreator(req, {});
 
+      // Same reasoning as the Order import above: neither an exact catalog
+      // match nor an admin-picked productMapping entry carries hpp itself.
+      const productHppById = new Map(
+        (await Product.find({}, 'hpp').lean()).map((p) => [String(p._id), p.hpp])
+      );
+
       // Resolved, never created here - same reasoning as POST /api/orders/
       // import: exact catalog name match first, then whatever the admin
       // chose via `productMapping` for names the dry run flagged as unknown.
@@ -1276,6 +1339,7 @@ function createApp() {
           productId: resolvedProduct.productId,
           qty: numOrUndefined(getCell(row, 'Qty')),
           unitPrice: numOrUndefined(getCell(row, 'Harga Satuan')),
+          hpp: resolvedProduct.productId ? productHppById.get(String(resolvedProduct.productId)) : undefined,
           totalPrice: numOrUndefined(getCell(row, 'Total Harga')),
           shippingCost: numOrUndefined(getCell(row, 'Ongkir')),
           totalBill: numOrUndefined(getCell(row, 'Total Tagihan')),
@@ -1453,6 +1517,34 @@ function createApp() {
       });
       const omsetByStatus = Array.from(statusBuckets.values()).sort((a, b) => b.count - a.count);
 
+      // Profit per status - beda perlakuan tergantung status:
+      // - Diterima/Dalam Pengiriman/Menunggu Dijemput/Menunggu Rekonsiliasi:
+      //   profit normal = omset (orderRealPrice) dikurangi HPP x Qty.
+      // - Return: sesuai ketentuan bisnis, barang return dianggap rusak/tidak
+      //   bisa dijual lagi - jadi rugi PENUH sebesar Ongkos Kirim + HPP x Qty,
+      //   tanpa omset sama sekali (uang COD-nya memang tidak pernah cair).
+      // - Dibatalkan: diabaikan total dari perhitungan profit (tidak untung
+      //   tidak rugi) - beda dari status lain yang tetap dihitung meski cuma
+      //   proyeksi (Dalam Pengiriman dkk).
+      const profitBuckets = new Map();
+      filteredOrders.forEach((o) => {
+        if (o.status === 'Dibatalkan') return;
+        let label = o.status || '(Tanpa Status)';
+        if (label === 'Diterima' && o.reconciliationStatus !== 'Sudah Rekonsiliasi') {
+          label = 'Menunggu Rekonsiliasi';
+        }
+        const hppCost = (o.hpp || 0) * (o.qty || 1);
+        const profit = label === 'Return'
+          ? -((o.shippingCost || 0) + hppCost)
+          : orderRealPrice(o) - hppCost;
+        const entry = profitBuckets.get(label) || { label, profit: 0, count: 0 };
+        entry.profit += profit;
+        entry.count += 1;
+        profitBuckets.set(label, entry);
+      });
+      const profitByStatus = Array.from(profitBuckets.values()).sort((a, b) => b.count - a.count);
+      const totalProfit = profitByStatus.reduce((sum, s) => sum + s.profit, 0);
+
       const avgOrderValue = nonCancelledOrders.length > 0 ? Math.round(totalOmset / nonCancelledOrders.length) : 0;
       const cancellationRate = totalPesanan > 0 ? Math.round((cancelledCount / totalPesanan) * 1000) / 10 : 0;
 
@@ -1582,10 +1674,11 @@ function createApp() {
 
       res.json({
         cards: {
-          totalOmset, totalOngkir, totalBiayaCod, totalPesanan, avgOrderValue, cancellationRate,
+          totalOmset, totalOngkir, totalBiayaCod, totalProfit, totalPesanan, avgOrderValue, cancellationRate,
           activePreOrders, chatMasuk, closingCount, closingRate,
         },
         omsetByStatus,
+        profitByStatus,
         revenueByDay,
         chatsByDay,
         ordersByProduct,

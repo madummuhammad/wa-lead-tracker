@@ -93,6 +93,12 @@
             <div class="stat-label">Total Omset</div>
             <p class="hint">Rumus: Nilai COD − Ongkos Kirim − Biaya COD, dari pesanan yang tidak dibatalkan.</p>
           </div>
+          <div class="stat-card stat-profit">
+            <div class="stat-icon">Δ</div>
+            <div class="stat-value" id="statTotalProfit">Rp 0</div>
+            <div class="stat-label">Total Profit</div>
+            <p class="hint">Omset − (HPP × Qty). Return dihitung rugi penuh (Ongkir + HPP), Dibatalkan diabaikan.</p>
+          </div>
           <div class="stat-card stat-ongkir">
             <div class="stat-icon">▤</div>
             <div class="stat-value" id="statTotalOngkir">Rp 0</div>
@@ -144,6 +150,10 @@
 
         <h3 class="stats-substatus-heading">Omset per Status Pesanan</h3>
         <section class="stats stats-status-omset" id="statusOmsetStats"></section>
+
+        <h3 class="stats-substatus-heading">Profit per Status Pesanan</h3>
+        <p class="hint" style="margin: -6px 0 10px;">Dibatalkan tidak ditampilkan (diabaikan dari perhitungan profit).</p>
+        <section class="stats stats-status-profit" id="statusProfitStats"></section>
 
         <section class="chart-grid">
           <div class="chart-card">
@@ -282,6 +292,7 @@
                 <th data-col="sku">SKU</th>
                 <th data-col="alamatGudang">Alamat Gudang</th>
                 <th data-col="harga">Harga Jual</th>
+                <th data-col="hpp">HPP</th>
                 <th data-col="berat">Berat (gram)</th>
                 <th data-col="volume">Volume (cm³)</th>
                 <th data-col="panjang">Panjang (cm)</th>
@@ -329,6 +340,10 @@
                 <label class="form-field">
                   <span>Harga Jual</span>
                   <input type="number" id="productPrice" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>HPP</span>
+                  <input type="number" id="productHpp" min="0" />
                 </label>
                 <label class="form-field">
                   <span>Berat (gram)</span>
@@ -445,6 +460,7 @@
                 <th data-col="diskonCod">Diskon COD</th>
                 <th data-col="biayaCod">Biaya COD</th>
                 <th data-col="harga">Harga</th>
+                <th data-col="hpp">HPP</th>
                 <th data-col="nilaiCod">Nilai COD</th>
                 <th data-col="status">Status</th>
                 <th data-col="resi">Resi</th>
@@ -580,6 +596,10 @@
                 <label class="form-field">
                   <span>Harga Produk</span>
                   <input type="number" id="orderPrice" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>HPP</span>
+                  <input type="number" id="orderHpp" min="0" />
                 </label>
                 <label class="form-field">
                   <span>Ongkos Kirim</span>
@@ -800,6 +820,7 @@
                 <th data-col="produk">Produk</th>
                 <th data-col="qty">Qty</th>
                 <th data-col="hargaSatuan">Harga Satuan</th>
+                <th data-col="hpp">HPP</th>
                 <th data-col="totalHarga">Total Harga</th>
                 <th data-col="ongkir">Ongkir</th>
                 <th data-col="totalTagihan">Total Tagihan</th>
@@ -882,6 +903,10 @@
                 <label class="form-field">
                   <span>Harga Satuan</span>
                   <input type="number" id="preOrderUnitPrice" min="0" />
+                </label>
+                <label class="form-field">
+                  <span>HPP</span>
+                  <input type="number" id="preOrderHpp" min="0" />
                 </label>
                 <label class="form-field">
                   <span>Total Harga</span>
