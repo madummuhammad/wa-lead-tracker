@@ -2550,6 +2550,102 @@ function renderLaporanCards(cards) {
   el('statLaporanRealizedProfit').textContent = formatSignedRupiah(cards.realizedProfit);
 }
 
+function renderLaporanProvinceOrdersRows(ordersByProvince) {
+  const tbody = el('laporanProvinceOrdersTableBody');
+  tbody.innerHTML = (ordersByProvince || [])
+    .map((p, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(p.province)}</td>
+        <td>${escapeHtml(p.count)}</td>
+      </tr>`)
+    .join('');
+  el('laporanProvinceOrdersEmptyState').classList.toggle('hidden', (ordersByProvince || []).length > 0);
+}
+
+function renderLaporanProvinceReturnRows(returnRateByProvince) {
+  const tbody = el('laporanProvinceReturnTableBody');
+  tbody.innerHTML = (returnRateByProvince || [])
+    .map((p, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(p.province)}</td>
+        <td>${escapeHtml(p.total)}</td>
+        <td>${escapeHtml(p.returnCount)}</td>
+        <td>${escapeHtml(p.rate)}%</td>
+      </tr>`)
+    .join('');
+  el('laporanProvinceReturnEmptyState').classList.toggle('hidden', (returnRateByProvince || []).length > 0);
+}
+
+// Generic click-to-sort for a ranking table's <thead> - th.sortable-col
+// elements (marked in index.html) carry data-sort-key matching a field name
+// in each row object. Clicking toggles asc/desc for that column (switching
+// to a new column starts descending for numbers, ascending for text - "biggest
+// first" vs "A to Z" are each the more useful default) and re-renders from
+// whatever data was last handed to it via .update(), no refetch involved.
+function setupSortableTable({ tableId, defaultKey, defaultDir, onRender }) {
+  const state = { key: defaultKey, dir: defaultDir, data: [] };
+  const table = el(tableId);
+  const headers = Array.from(table.querySelectorAll('th.sortable-col'));
+
+  function applySort() {
+    const sorted = state.data.slice().sort((a, b) => {
+      const av = a[state.key];
+      const bv = b[state.key];
+      const cmp = typeof av === 'string' || typeof bv === 'string'
+        ? String(av).localeCompare(String(bv))
+        : (av ?? 0) - (bv ?? 0);
+      return state.dir === 'asc' ? cmp : -cmp;
+    });
+    headers.forEach((th) => {
+      const isActive = th.dataset.sortKey === state.key;
+      th.classList.toggle('sort-active', isActive);
+      let arrow = th.querySelector('.sort-arrow');
+      if (!arrow) {
+        arrow = document.createElement('span');
+        arrow.className = 'sort-arrow';
+        th.appendChild(arrow);
+      }
+      arrow.textContent = isActive ? (state.dir === 'asc' ? '▲' : '▼') : '↕';
+    });
+    onRender(sorted);
+  }
+
+  headers.forEach((th) => {
+    th.addEventListener('click', () => {
+      if (state.key === th.dataset.sortKey) {
+        state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        state.key = th.dataset.sortKey;
+        state.dir = state.key === 'province' ? 'asc' : 'desc';
+      }
+      applySort();
+    });
+  });
+
+  applySort();
+  return { update(newData) { state.data = newData || []; applySort(); } };
+}
+
+let laporanProvinceOrdersSortCtrl = null;
+let laporanProvinceReturnSortCtrl = null;
+
+function initLaporanProvinceTables() {
+  laporanProvinceOrdersSortCtrl = setupSortableTable({
+    tableId: 'laporanProvinceOrdersTable',
+    defaultKey: 'count',
+    defaultDir: 'desc',
+    onRender: renderLaporanProvinceOrdersRows,
+  });
+  laporanProvinceReturnSortCtrl = setupSortableTable({
+    tableId: 'laporanProvinceReturnTable',
+    defaultKey: 'rate',
+    defaultDir: 'desc',
+    onRender: renderLaporanProvinceReturnRows,
+  });
+}
+
 async function renderLaporan() {
   el('laporanLoadingState').classList.remove('hidden');
   try {
@@ -2569,6 +2665,8 @@ async function renderLaporan() {
     populateDashboardFilterSelect(el('laporanFilterCreator'), stats.filterOptions.creators, 'Semua CS');
     renderMultiselectPanel('laporanProduct', LAPORAN_PRODUCT_MULTISELECT, stats.filterOptions.products);
     renderLaporanCards(stats.cards);
+    laporanProvinceOrdersSortCtrl.update(stats.ordersByProvince);
+    laporanProvinceReturnSortCtrl.update(stats.returnRateByProvince);
   } catch (e) {
     handleApiError(e, 'Gagal memuat data laporan.');
   } finally {
@@ -3013,6 +3111,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupColumnVisibility({ tableId: 'ordersTable', multiId: 'ordersColumnMulti', toggleId: 'ordersColumnToggle', panelId: 'ordersColumnPanel' });
   setupColumnVisibility({ tableId: 'preOrdersTable', multiId: 'preOrdersColumnMulti', toggleId: 'preOrdersColumnToggle', panelId: 'preOrdersColumnPanel' });
   setupColumnVisibility({ tableId: 'adsTable', multiId: 'adsColumnMulti', toggleId: 'adsColumnToggle', panelId: 'adsColumnPanel' });
+  initLaporanProvinceTables();
 
   const storedToken = localStorage.getItem(TOKEN_STORAGE);
   if (storedToken) {

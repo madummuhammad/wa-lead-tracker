@@ -1784,6 +1784,30 @@ function createApp() {
       }, 0);
       const realizedProfit = realizedProfitFromOrders - totalBiayaIklan;
 
+      // ---- Per-provinsi breakdown (Order.province - "Provinsi" penerima
+      // dari file impor Pesanan) - jumlah pesanan dan return rate, dua-duanya
+      // dari filteredOrders yang sama (ikut filter owner/produk/tanggal di
+      // atas), jadi konsisten dengan card-card lain di halaman ini.
+      const provinceMap = new Map();
+      filteredOrders.forEach((o) => {
+        const province = o.province || '(Tidak Diketahui)';
+        const entry = provinceMap.get(province) || { province, count: 0, returnCount: 0 };
+        entry.count += 1;
+        if (o.status === 'Return') entry.returnCount += 1;
+        provinceMap.set(province, entry);
+      });
+      const ordersByProvince = Array.from(provinceMap.values())
+        .map((e) => ({ province: e.province, count: e.count }))
+        .sort((a, b) => b.count - a.count);
+      const returnRateByProvince = Array.from(provinceMap.values())
+        .map((e) => ({
+          province: e.province,
+          total: e.count,
+          returnCount: e.returnCount,
+          rate: e.count > 0 ? Math.round((e.returnCount / e.count) * 1000) / 10 : 0,
+        }))
+        .sort((a, b) => b.rate - a.rate);
+
       // Same shape/source as Dashboard's own filterOptions, from the
       // *unfiltered* data so the dropdowns always show every possibility.
       const filterOptions = {
@@ -1796,7 +1820,12 @@ function createApp() {
         creators: Array.from(new Set(preOrders.map((p) => p.createdByEmail).filter(Boolean))).sort(),
       };
 
-      res.json({ cards: { totalOmset, totalHpp, totalBiayaIklan, totalProfit, realizedProfit }, filterOptions });
+      res.json({
+        cards: { totalOmset, totalHpp, totalBiayaIklan, totalProfit, realizedProfit },
+        ordersByProvince,
+        returnRateByProvince,
+        filterOptions,
+      });
     } catch (e) {
       res.status(500).json({ error: String(e) });
     }

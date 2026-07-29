@@ -540,6 +540,14 @@ th, td {
   font-size: 13px;
 }
 th { background: #fafbfc; color: var(--ink-soft); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.02em; }
+th.sortable-col {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+th.sortable-col:hover { color: var(--ink); background: #f0f2f3; }
+th.sortable-col .sort-arrow { margin-left: 4px; color: var(--ink-faint); }
+th.sortable-col.sort-active .sort-arrow { color: var(--brand); }
 tbody tr:hover { background: #fafcfb; }
 
 .template-text-cell {
