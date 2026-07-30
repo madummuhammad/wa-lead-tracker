@@ -614,7 +614,15 @@ function renderKontak() {
     if (!matchedIds.has(id)) selectedIds.delete(id);
   });
 
-  matched.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  // Newest lead first - firstMessageDate (exact, from a deep scan) when
+  // known, falling back to firstSeenAt (first time the extension scanned
+  // this chat) for one that hasn't been deep-scanned yet, so a chat with
+  // neither never silently sorts as if it were the oldest.
+  matched.sort((a, b) => {
+    const ta = new Date(a.firstMessageDate || a.firstSeenAt || 0).getTime();
+    const tb = new Date(b.firstMessageDate || b.firstSeenAt || 0).getTime();
+    return tb - ta;
+  });
 
   // Only 10 rows are rendered to the DOM at a time - re-rendering the whole
   // table (edit/toggle/select, filter change, background refresh) stays fast
@@ -792,7 +800,7 @@ function renderProductsTable() {
 
   allProducts
     .slice()
-    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
     .forEach((product) => {
       const dimCells = PRODUCT_DIM_FIELDS
         .map((field) => `<td data-col="${PRODUCT_DIM_COL[field]}">${escapeHtml(formatDim(product[field]))}</td>`)
@@ -2314,18 +2322,21 @@ function renderTemplatesTable() {
   tbody.innerHTML = '';
   el('templatesEmptyState').classList.toggle('hidden', allTemplates.length > 0);
 
-  allTemplates.forEach((t) => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${escapeHtml(t.label)}</td>
-      <td class="template-text-cell">${escapeHtml(t.text)}</td>
-      <td>
-        <button class="edit-product-btn edit-template-btn" data-id="${escapeHtml(t.id)}">Edit</button>
-        <button class="delete-product-btn delete-template-btn" data-id="${escapeHtml(t.id)}">Hapus</button>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
+  allTemplates
+    .slice()
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    .forEach((t) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(t.label)}</td>
+        <td class="template-text-cell">${escapeHtml(t.text)}</td>
+        <td>
+          <button class="edit-product-btn edit-template-btn" data-id="${escapeHtml(t.id)}">Edit</button>
+          <button class="delete-product-btn delete-template-btn" data-id="${escapeHtml(t.id)}">Hapus</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
 
   tbody.querySelectorAll('.edit-template-btn').forEach((btn) => {
     btn.addEventListener('click', () => startEditTemplate(btn.dataset.id));
@@ -3032,18 +3043,21 @@ async function renderLaporan() {
 function renderUsersTable(users) {
   const tbody = el('usersTableBody');
   tbody.innerHTML = '';
-  users.forEach((u) => {
-    const created = u.createdAt ? new Date(u.createdAt).toLocaleDateString('id-ID') : '-';
-    const isSelf = currentUser && u._id === currentUser.userId;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${escapeHtml(u.email)}</td>
-      <td>${escapeHtml(u.role)}</td>
-      <td>${escapeHtml(created)}</td>
-      <td>${isSelf ? '' : `<button class="delete-user-btn" data-id="${escapeHtml(u._id)}">Hapus</button>`}</td>
-    `;
-    tbody.appendChild(tr);
-  });
+  users
+    .slice()
+    .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    .forEach((u) => {
+      const created = u.createdAt ? new Date(u.createdAt).toLocaleDateString('id-ID') : '-';
+      const isSelf = currentUser && u._id === currentUser.userId;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(u.email)}</td>
+        <td>${escapeHtml(u.role)}</td>
+        <td>${escapeHtml(created)}</td>
+        <td>${isSelf ? '' : `<button class="delete-user-btn" data-id="${escapeHtml(u._id)}">Hapus</button>`}</td>
+      `;
+      tbody.appendChild(tr);
+    });
   tbody.querySelectorAll('.delete-user-btn').forEach((btn) => {
     btn.addEventListener('click', () => deleteUser(btn.dataset.id));
   });
