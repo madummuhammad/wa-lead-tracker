@@ -2067,6 +2067,7 @@ function renderPreOrdersTable() {
   const notifyStatusFilter = el('preOrderFilterNotifyStatus').value;
   const responseStatusFilter = el('preOrderFilterResponseStatus').value;
   const anekaFilter = el('preOrderFilterAneka').value;
+  const q = el('preOrderSearchBox').value.trim().toLowerCase();
 
   const filtered = allPreOrders.filter((p) => {
     if (creatorFilter !== 'all' && (p.createdByEmail || '') !== creatorFilter) return false;
@@ -2082,6 +2083,10 @@ function renderPreOrdersTable() {
     if (responseStatusFilter !== 'all' && preOrderResponseStatus(p).state !== responseStatusFilter) return false;
     if (anekaFilter === 'checked' && p.aneka !== true) return false;
     if (anekaFilter === 'unchecked' && p.aneka === true) return false;
+    if (q) {
+      const hay = `${p.customerName || ''} ${p.customerPhone || ''} ${p.orderNumber || ''} ${p.noResi || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     return true;
   });
 
@@ -3256,7 +3261,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderOrdersTable();
   });
   el('preOrdersRefreshBtn').addEventListener('click', reloadPreOrdersPageData);
-  ['preOrderFilterCreator', 'preOrderFilterOwner', 'preOrderFilterFrom', 'preOrderFilterTo', 'preOrderFilterDateBasis', 'preOrderFilterNotifyStatus', 'preOrderFilterResponseStatus', 'preOrderFilterAneka'].forEach((id) => {
+  ['preOrderFilterCreator', 'preOrderFilterOwner', 'preOrderFilterFrom', 'preOrderFilterTo', 'preOrderFilterDateBasis', 'preOrderFilterNotifyStatus', 'preOrderFilterResponseStatus', 'preOrderFilterAneka', 'preOrderSearchBox'].forEach((id) => {
     el(id).addEventListener('input', () => {
       preOrdersPage = 1;
       renderPreOrdersTable();
