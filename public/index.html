@@ -37,6 +37,9 @@
         <button class="nav-link" data-page="pesanan">
           <span class="nav-icon">▧</span> Pesanan
         </button>
+        <button class="nav-link" data-page="pesananBermasalah">
+          <span class="nav-icon">⚠</span> Pesanan Bermasalah
+        </button>
         <button class="nav-link" data-page="praPesanan">
           <span class="nav-icon">▥</span> Pra-Pesanan
         </button>
@@ -704,6 +707,7 @@
               <tr>
                 <th><input type="checkbox" id="ordersSelectAllCheckbox" title="Pilih semua" /></th>
                 <th data-col="noOrder">No. Order</th>
+                <th data-col="followUps">Riwayat Follow Up</th>
                 <th data-col="shippingType">Pengiriman</th>
                 <th data-col="courier">Kurir</th>
                 <th data-col="penerima">Penerima</th>
@@ -996,6 +1000,139 @@
             </div>
           </div>
         </div>
+      </section>
+
+      <!-- ================= PESANAN BERMASALAH PAGE ================= -->
+      <!-- Same underlying Order records as the Pesanan page above (same
+           /api/orders data, same edit modal, same delete endpoint) - just a
+           pre-filtered view (isProblematicOrder) with its own filter bar,
+           pagination, and column visibility, and deliberately no import
+           section (importing belongs on the main Pesanan page only). -->
+      <section id="pesananBermasalahPage" class="page hidden">
+        <header class="page-header">
+          <h1>Pesanan Bermasalah</h1>
+          <button id="problemOrdersRefreshBtn" class="btn-outline" title="Ambil data terbaru dari MongoDB">⟳ Muat Ulang</button>
+        </header>
+
+        <section class="filters">
+          <label>Dari
+            <input type="date" id="problemOrderFilterFrom" />
+          </label>
+          <label>Sampai
+            <input type="date" id="problemOrderFilterTo" />
+          </label>
+          <label>Berdasarkan Tanggal
+            <select id="problemOrderFilterDateBasis">
+              <option value="order">Tanggal Order</option>
+              <option value="lead">Tanggal Lead</option>
+            </select>
+          </label>
+          <label>Filter Status
+            <select id="problemOrderFilterStatus">
+              <option value="all">Semua Status</option>
+            </select>
+          </label>
+          <label>Akun WA
+            <select id="problemOrderFilterOwner">
+              <option value="all">Semua akun</option>
+            </select>
+          </label>
+          <label>Produk
+            <div class="multiselect" id="problemOrderFilterProductMulti">
+              <button type="button" class="multiselect-toggle" id="problemOrderFilterProductToggle">Semua produk</button>
+              <div class="multiselect-panel hidden" id="problemOrderFilterProductPanel"></div>
+            </div>
+          </label>
+          <input type="search" id="problemOrderSearchBox" placeholder="Cari nama / no. HP / no. resi..." />
+        </section>
+
+        <section class="bulk-actions">
+          <span id="problemOrdersSelectedCount"></span>
+          <button id="problemOrdersDeleteSelectedBtn" class="danger" disabled>Hapus yang Dipilih</button>
+          <div class="multiselect column-toggle" id="problemOrdersColumnMulti">
+            <button type="button" class="multiselect-toggle" id="problemOrdersColumnToggle">Kolom</button>
+            <div class="multiselect-panel hidden" id="problemOrdersColumnPanel"></div>
+          </div>
+        </section>
+
+        <section class="table-wrap scroll-x">
+          <table id="problemOrdersTable">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="problemOrdersSelectAllCheckbox" title="Pilih semua" /></th>
+                <th data-col="noOrder">No. Order</th>
+                <th data-col="followUps">Riwayat Follow Up</th>
+                <th data-col="shippingType">Pengiriman</th>
+                <th data-col="courier">Kurir</th>
+                <th data-col="penerima">Penerima</th>
+                <th data-col="noHp">No. HP</th>
+                <th data-col="alamat">Alamat</th>
+                <th data-col="kota">Kota Penerima</th>
+                <th data-col="produk">Produk</th>
+                <th data-col="berat">Berat</th>
+                <th data-col="jumlah">Jumlah</th>
+                <th data-col="volume">Volume</th>
+                <th data-col="ongkosKirim">Ongkos Kirim</th>
+                <th data-col="diskonCod">Diskon COD</th>
+                <th data-col="biayaCod">Biaya COD</th>
+                <th data-col="harga">Harga</th>
+                <th data-col="hpp">HPP</th>
+                <th data-col="nilaiCod">Nilai COD</th>
+                <th data-col="status">Status</th>
+                <th data-col="resi">Resi</th>
+                <th data-col="tanggal">Tanggal Dibuat</th>
+                <th data-col="tanggalDiterima">Tanggal Diterima</th>
+                <th data-col="catatan">Catatan</th>
+                <th data-col="kodeReferensi">Kode Referensi</th>
+                <th data-col="statusRekon">Status Rekonsiliasi</th>
+                <th data-col="namaAdminGudang">Nama Admin Gudang</th>
+                <th data-col="akunWa">Akun WA</th>
+                <th data-col="zipcode">Zipcode</th>
+                <th data-col="kotaKabupaten">Kota/Kabupaten</th>
+                <th data-col="returnDate">Tanggal Return</th>
+                <th data-col="problem">Problem</th>
+                <th data-col="variant">Variasi</th>
+                <th data-col="senderDistrict">Kecamatan Pengirim</th>
+                <th data-col="senderProvince">Provinsi Pengirim</th>
+                <th data-col="pickupType">Tipe Pickup</th>
+                <th data-col="pickupTime">Waktu Pickup</th>
+                <th data-col="insurance">Asuransi</th>
+                <th data-col="senderRegency">Kota/Kabupaten Pengirim</th>
+                <th data-col="senderAddress">Alamat Pengirim</th>
+                <th data-col="csName">Nama CS</th>
+                <th data-col="returnToSellerDate">Tanggal Return Ke Seller</th>
+                <th data-col="originalShippingCost">Ongkos Kirim Asli</th>
+                <th data-col="district">Kecamatan</th>
+                <th data-col="province">Provinsi</th>
+                <th data-col="ongkirBerangkat">Ongkir Berangkat</th>
+                <th data-col="ongkirPulang">Ongkir Pulang</th>
+                <th data-col="potensiRTS">Potensi RTS</th>
+                <th data-col="problemStatusTerakhir">Status Terakhir (Kurir)</th>
+                <th data-col="problemKategori">Kategori Problem</th>
+                <th data-col="problemBuktiKurir">Bukti Kurir</th>
+                <th data-col="problemRiwayat">Riwayat Problem</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="problemOrdersTableBody"></tbody>
+          </table>
+          <div id="problemOrdersEmptyState" class="notice hidden">Tidak ada pesanan bermasalah.</div>
+          <div id="problemOrdersLoadingState" class="notice hidden">Memuat data dari MongoDB...</div>
+        </section>
+
+        <section class="pagination">
+          <button id="problemOrdersPrevBtn" class="btn-outline">‹ Sebelumnya</button>
+          <span id="problemOrdersPageInfo" class="pagination-info"></span>
+          <button id="problemOrdersNextBtn" class="btn-outline">Berikutnya ›</button>
+          <label class="page-size-picker">Tampilkan
+            <select id="problemOrdersPageSize">
+              <option value="10">10</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+        </section>
       </section>
 
       <!-- ================= PRA-PESANAN PAGE ================= -->

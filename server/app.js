@@ -662,6 +662,46 @@ function createApp() {
     }
   });
 
+  // Follow-up log (see wa-ektension's "Riwayat Follow Up") - the extension
+  // only calls this once a CS explicitly confirms a template was actually
+  // sent (a template merely picked/inserted stays local-only in
+  // chrome.storage and never reaches here), so every row this creates is a
+  // genuinely-sent follow-up, not just an attempt.
+  app.post('/api/orders/:id/followups', requireAuth, async (req, res) => {
+    try {
+      const { templateLabel, ownerNumber } = req.body || {};
+      if (!templateLabel) return res.status(400).json({ error: 'templateLabel is required' });
+      const entry = { templateLabel: String(templateLabel), ownerNumber, sentAt: new Date() };
+      const order = await Order.findByIdAndUpdate(
+        req.params.id,
+        { $push: { followUps: entry } },
+        { new: true }
+      );
+      if (!order) return res.status(404).json({ error: 'order not found' });
+      const saved = order.followUps[order.followUps.length - 1];
+      res.json({ ok: true, followUp: { id: saved._id, templateLabel: saved.templateLabel, ownerNumber: saved.ownerNumber, sentAt: saved.sentAt } });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
+  // Undo - a CS un-toggling "Sudah Dikirim" back to "Belum Dikirim" (marked
+  // it by mistake) removes the entry entirely rather than leaving a
+  // contradicted record, since there's no in-between state for this log.
+  app.delete('/api/orders/:id/followups/:followupId', requireAuth, async (req, res) => {
+    try {
+      const order = await Order.findByIdAndUpdate(
+        req.params.id,
+        { $pull: { followUps: { _id: req.params.followupId } } },
+        { new: true }
+      );
+      if (!order) return res.status(404).json({ error: 'order not found' });
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   // Deleting an Order without also clearing any PreOrder.convertedOrderId
   // pointing to it leaves that pre-order permanently stuck: findPreOrderMatch
   // only searches PreOrders with no convertedOrderId, so a "converted" one

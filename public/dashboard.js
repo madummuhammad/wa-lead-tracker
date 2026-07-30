@@ -43,6 +43,11 @@ let preOrdersPageSize = loadStoredPageSize('preOrders', 10);
 let preOrdersPage = 1;
 let selectedOrderIds = new Set();
 let selectedPreOrderIds = new Set();
+// Pesanan Bermasalah - same allOrders array as Pesanan above (isProblematicOrder-
+// filtered view of it), just its own pagination/selection state.
+let problemOrdersPageSize = loadStoredPageSize('problemOrders', 10);
+let problemOrdersPage = 1;
+let selectedProblemOrderIds = new Set();
 let allUsersMini = [];
 
 const el = (id) => document.getElementById(id);
@@ -318,6 +323,25 @@ function escapeHtml(str) {
 function renderProblemRiwayat(text) {
   if (!text) return '-';
   return String(text).split('\n').map((line) => escapeHtml(line)).join('<br>');
+}
+
+// Order.followUps - confirmed-sent template log (see wa-ektension's floating
+// panel "Riwayat Follow Up" under Riwayat Problem). Newest first, same as the
+// extension's own list, since that's what a CS checking "did we already
+// follow up on this" wants to see first.
+function renderFollowUps(followUps) {
+  if (!followUps || followUps.length === 0) return '-';
+  return followUps
+    .slice()
+    .sort((a, b) => new Date(b.sentAt) - new Date(a.sentAt))
+    .map((fu) => {
+      const dateStr = fu.sentAt
+        ? new Date(fu.sentAt).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+        : '-';
+      const owner = fu.ownerNumber ? ` (${escapeHtml(fu.ownerNumber)})` : '';
+      return `${escapeHtml(dateStr)} - ${escapeHtml(fu.templateLabel || '-')}${owner}`;
+    })
+    .join('<br>');
 }
 
 // "Bukti Kurir" is a comma-separated list of photo URLs (0 to several) -
@@ -923,6 +947,10 @@ const ORDER_PRODUCT_MULTISELECT = {
   multi: 'orderFilterProductMulti', toggle: 'orderFilterProductToggle',
   panel: 'orderFilterProductPanel', all: 'orderFilterProductAll',
 };
+const PROBLEM_ORDER_PRODUCT_MULTISELECT = {
+  multi: 'problemOrderFilterProductMulti', toggle: 'problemOrderFilterProductToggle',
+  panel: 'problemOrderFilterProductPanel', all: 'problemOrderFilterProductAll',
+};
 
 function populateOrderStatusSelect(select) {
   const statuses = Array.from(new Set(allOrders.map((o) => o.status).filter(Boolean))).sort();
@@ -1025,6 +1053,7 @@ function renderOrdersTable() {
     tr.innerHTML = `
       <td><input type="checkbox" class="order-row-checkbox" data-id="${escapeHtml(order.id)}" ${selectedOrderIds.has(order.id) ? 'checked' : ''} /></td>
       <td data-col="noOrder">${escapeHtml(order.id)}</td>
+      <td data-col="followUps">${renderFollowUps(order.followUps)}</td>
       <td data-col="shippingType">${escapeHtml(order.shippingType || '-')}</td>
       <td data-col="courier">${escapeHtml(order.courier || '-')}</td>
       <td data-col="penerima">${escapeHtml(order.customerName || '-')}</td>
@@ -1140,10 +1169,194 @@ async function loadOrders() {
     const { orders } = await apiGet('/api/orders');
     allOrders = orders;
     renderOrdersTable();
+    // Same allOrders, always kept in sync too - whichever of the two pages
+    // (Pesanan / Pesanan Bermasalah) isn't currently visible just re-renders
+    // into a hidden table, which is harmless and keeps both pages fresh
+    // after any edit/delete/import regardless of which one triggered it.
+    renderProblemOrdersTable();
   } catch (e) {
     handleApiError(e, 'Gagal memuat daftar pesanan.');
   } finally {
     el('ordersLoadingState').classList.add('hidden');
+  }
+}
+
+// ---- Pesanan Bermasalah - filtered view of the same Orders, own filter
+// bar/pagination/column-visibility/selection, but reuses Pesanan's edit
+// modal (startEditOrder/saveOrder) and delete (deleteOrder) as-is since
+// they operate on the same underlying Order records by id. ----
+
+function renderProblemOrdersTable() {
+  populateOrderStatusSelect(el('problemOrderFilterStatus'));
+  populateOrderOwnerSelect(el('problemOrderFilterOwner'));
+  const problemOrders = allOrders.filter(isProblematicOrder);
+  const productNames = Array.from(new Set(problemOrders.map((o) => o.productName).filter(Boolean))).sort();
+  renderMultiselectPanel('problemOrderProduct', PROBLEM_ORDER_PRODUCT_MULTISELECT, productNames);
+
+  const statusFilter = el('problemOrderFilterStatus').value;
+  const ownerFilter = el('problemOrderFilterOwner').value;
+  const from = el('problemOrderFilterFrom').value;
+  const to = el('problemOrderFilterTo').value;
+  const dateBasis = el('problemOrderFilterDateBasis').value;
+  const selectedProducts = getMultiselectSelection('problemOrderProduct');
+  const q = el('problemOrderSearchBox').value.trim().toLowerCase();
+
+  const filtered = problemOrders.filter((order) => {
+    if (statusFilter !== 'all' && (order.status || '') !== statusFilter) return false;
+    if (ownerFilter !== 'all' && (order.ownerNumber || '') !== ownerFilter) return false;
+    if (selectedProducts.size > 0 && !selectedProducts.has(order.productName || '')) return false;
+    const dateToCheck = dateBasis === 'lead' ? order.leadDate : order.createdDate;
+    if (!withinDateRange(dateToCheck, from, to)) return false;
+    if (q) {
+      const hay = `${order.customerName || ''} ${order.customerPhone || ''} ${order.trackingNumber || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const sorted = filtered.slice().sort((a, b) => {
+    const ta = a.createdDate ? new Date(a.createdDate).getTime() : 0;
+    const tb = b.createdDate ? new Date(b.createdDate).getTime() : 0;
+    return tb - ta;
+  });
+
+  const currentIds = new Set(sorted.map((o) => o.id));
+  Array.from(selectedProblemOrderIds).forEach((id) => {
+    if (!currentIds.has(id)) selectedProblemOrderIds.delete(id);
+  });
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / problemOrdersPageSize));
+  if (problemOrdersPage > totalPages) problemOrdersPage = totalPages;
+  if (problemOrdersPage < 1) problemOrdersPage = 1;
+  const pageStart = (problemOrdersPage - 1) * problemOrdersPageSize;
+  const pageItems = sorted.slice(pageStart, pageStart + problemOrdersPageSize);
+
+  el('problemOrdersPageInfo').textContent = sorted.length > 0
+    ? `Halaman ${problemOrdersPage} dari ${totalPages} (${sorted.length} pesanan)`
+    : '';
+  el('problemOrdersPrevBtn').disabled = problemOrdersPage <= 1;
+  el('problemOrdersNextBtn').disabled = problemOrdersPage >= totalPages;
+
+  const tbody = el('problemOrdersTableBody');
+  tbody.innerHTML = '';
+  el('problemOrdersEmptyState').classList.toggle('hidden', sorted.length > 0);
+
+  pageItems.forEach((order) => {
+    const dateDisplay = order.createdDate
+      ? new Date(order.createdDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '-';
+    const receivedDateDisplay = order.receivedDate
+      ? new Date(order.receivedDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '-';
+    const returnDateDisplay = order.returnDate
+      ? new Date(order.returnDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '-';
+    const returnToSellerDateDisplay = order.returnToSellerDate
+      ? new Date(order.returnToSellerDate).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : '-';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="checkbox" class="problem-order-row-checkbox" data-id="${escapeHtml(order.id)}" ${selectedProblemOrderIds.has(order.id) ? 'checked' : ''} /></td>
+      <td data-col="noOrder">${escapeHtml(order.id)}</td>
+      <td data-col="followUps">${renderFollowUps(order.followUps)}</td>
+      <td data-col="shippingType">${escapeHtml(order.shippingType || '-')}</td>
+      <td data-col="courier">${escapeHtml(order.courier || '-')}</td>
+      <td data-col="penerima">${escapeHtml(order.customerName || '-')}</td>
+      <td data-col="noHp">${escapeHtml(order.customerPhone || '-')}</td>
+      <td data-col="alamat">${escapeHtml(order.address || '-')}</td>
+      <td data-col="kota">${escapeHtml(order.city || '-')}</td>
+      <td data-col="produk">${escapeHtml(order.productName || '-')}</td>
+      <td data-col="berat">${escapeHtml(order.weight ?? '-')}</td>
+      <td data-col="jumlah">${escapeHtml(order.qty ?? '-')}</td>
+      <td data-col="volume">${escapeHtml(order.volume || '-')}</td>
+      <td data-col="ongkosKirim">${escapeHtml(formatRupiah(order.shippingCost))}</td>
+      <td data-col="diskonCod">${escapeHtml(formatRupiah(order.codDiscount))}</td>
+      <td data-col="biayaCod">${escapeHtml(formatRupiah(order.codFee))}</td>
+      <td data-col="harga">${escapeHtml(formatRupiah((order.codValue || 0) - (order.shippingCost || 0)))}</td>
+      <td data-col="hpp">${escapeHtml(formatRupiah(order.hpp))}</td>
+      <td data-col="nilaiCod">${escapeHtml(formatRupiah(order.codValue))}</td>
+      <td data-col="status">${escapeHtml(order.status || '-')}</td>
+      <td data-col="resi">${escapeHtml(order.trackingNumber || '-')}</td>
+      <td data-col="tanggal">${escapeHtml(dateDisplay)}</td>
+      <td data-col="tanggalDiterima">${escapeHtml(receivedDateDisplay)}</td>
+      <td data-col="catatan">${escapeHtml(order.note || '-')}</td>
+      <td data-col="kodeReferensi">${escapeHtml(order.refCode || '-')}</td>
+      <td data-col="statusRekon">${escapeHtml(order.reconciliationStatus || '-')}</td>
+      <td data-col="namaAdminGudang">${escapeHtml(order.warehouseAdminName || '-')}</td>
+      <td data-col="akunWa">${escapeHtml(order.ownerNumber || '-')}</td>
+      <td data-col="zipcode">${escapeHtml(order.zipcode || '-')}</td>
+      <td data-col="kotaKabupaten">${escapeHtml(order.regency || '-')}</td>
+      <td data-col="returnDate">${escapeHtml(returnDateDisplay)}</td>
+      <td data-col="problem">${escapeHtml(order.problem || '-')}</td>
+      <td data-col="variant">${escapeHtml(order.variant || '-')}</td>
+      <td data-col="senderDistrict">${escapeHtml(order.senderDistrict || '-')}</td>
+      <td data-col="senderProvince">${escapeHtml(order.senderProvince || '-')}</td>
+      <td data-col="pickupType">${escapeHtml(order.pickupType || '-')}</td>
+      <td data-col="pickupTime">${escapeHtml(order.pickupTime || '-')}</td>
+      <td data-col="insurance">${escapeHtml(order.insurance || '-')}</td>
+      <td data-col="senderRegency">${escapeHtml(order.senderRegency || '-')}</td>
+      <td data-col="senderAddress">${escapeHtml(order.senderAddress || '-')}</td>
+      <td data-col="csName">${escapeHtml(order.csName || '-')}</td>
+      <td data-col="returnToSellerDate">${escapeHtml(returnToSellerDateDisplay)}</td>
+      <td data-col="originalShippingCost">${escapeHtml(formatRupiah(order.originalShippingCost))}</td>
+      <td data-col="district">${escapeHtml(order.district || '-')}</td>
+      <td data-col="province">${escapeHtml(order.province || '-')}</td>
+      <td data-col="ongkirBerangkat">${escapeHtml(formatRupiah(order.ongkirBerangkat))}</td>
+      <td data-col="ongkirPulang">${escapeHtml(formatRupiah(order.ongkirPulang))}</td>
+      <td data-col="potensiRTS">${escapeHtml(formatRupiah(order.potensiRTS))}</td>
+      <td data-col="problemStatusTerakhir">${escapeHtml(order.problemStatusTerakhir || '-')}</td>
+      <td data-col="problemKategori">${escapeHtml(order.problemKategori || '-')}</td>
+      <td data-col="problemBuktiKurir">${renderBuktiKurir(order.problemBuktiKurir)}</td>
+      <td data-col="problemRiwayat">${renderProblemRiwayat(order.problemRiwayat)}</td>
+      <td>
+        <button class="edit-product-btn edit-order-btn" data-id="${escapeHtml(order.id)}">Edit</button>
+        <button class="delete-product-btn delete-order-btn" data-id="${escapeHtml(order.id)}">Hapus</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll('.problem-order-row-checkbox').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedProblemOrderIds.add(cb.dataset.id);
+      else selectedProblemOrderIds.delete(cb.dataset.id);
+      updateProblemOrdersSelectionUi();
+    });
+  });
+  // Reuses the shared Pesanan edit modal / delete flow as-is - these operate
+  // on Order.id against the same allOrders/backend, not anything specific
+  // to which table's row triggered them.
+  tbody.querySelectorAll('.edit-order-btn').forEach((btn) => {
+    btn.addEventListener('click', () => startEditOrder(btn.dataset.id));
+  });
+  tbody.querySelectorAll('.delete-order-btn').forEach((btn) => {
+    btn.addEventListener('click', () => deleteOrder(btn.dataset.id));
+  });
+
+  updateProblemOrdersSelectionUi();
+}
+
+function updateProblemOrdersSelectionUi() {
+  const count = selectedProblemOrderIds.size;
+  el('problemOrdersDeleteSelectedBtn').disabled = count === 0;
+  el('problemOrdersSelectedCount').textContent = count > 0 ? `${count} dipilih` : '';
+
+  const checkboxes = document.querySelectorAll('.problem-order-row-checkbox');
+  const checkedCount = Array.from(checkboxes).filter((cb) => cb.checked).length;
+  el('problemOrdersSelectAllCheckbox').checked = checkboxes.length > 0 && checkedCount === checkboxes.length;
+  el('problemOrdersSelectAllCheckbox').indeterminate = checkedCount > 0 && checkedCount < checkboxes.length;
+}
+
+async function deleteSelectedProblemOrders() {
+  const ids = Array.from(selectedProblemOrderIds);
+  if (ids.length === 0) return;
+  if (!confirm(`Hapus ${ids.length} pesanan yang dipilih? Tindakan ini tidak bisa dibatalkan.`)) return;
+  try {
+    await apiPost('/api/orders/delete', { ids });
+    selectedProblemOrderIds.clear();
+    await loadOrders();
+  } catch (e) {
+    handleApiError(e, 'Gagal menghapus pesanan.');
   }
 }
 
@@ -2892,6 +3105,7 @@ function switchPage(page) {
   el('kontakPage').classList.toggle('hidden', page !== 'kontak');
   el('produkPage').classList.toggle('hidden', page !== 'produk');
   el('pesananPage').classList.toggle('hidden', page !== 'pesanan');
+  el('pesananBermasalahPage').classList.toggle('hidden', page !== 'pesananBermasalah');
   el('praPesananPage').classList.toggle('hidden', page !== 'praPesanan');
   el('templatesPage').classList.toggle('hidden', page !== 'templates');
   el('iklanPage').classList.toggle('hidden', page !== 'iklan');
@@ -2900,6 +3114,7 @@ function switchPage(page) {
   if (page === 'dashboard') renderDashboard();
   if (page === 'produk') loadProducts();
   if (page === 'pesanan') loadOrders();
+  if (page === 'pesananBermasalah') loadOrders();
   if (page === 'praPesanan') reloadPreOrdersPageData();
   if (page === 'templates') loadTemplates();
   if (page === 'iklan') reloadAdsPageData();
@@ -3092,6 +3307,50 @@ document.addEventListener('DOMContentLoaded', async () => {
   el('orderFormCloseBtn').addEventListener('click', closeOrderFormModal);
   el('orderProductName').addEventListener('change', applyOrderProductPrice);
 
+  // ---- Pesanan Bermasalah - same wiring pattern as Pesanan above, own
+  // page/pageSize/selection state, but orderSaveBtn/orderCancelEditBtn/
+  // orderFormCloseBtn above already cover the shared edit modal for both. ----
+  el('problemOrdersRefreshBtn').addEventListener('click', loadOrders);
+  ['problemOrderFilterStatus', 'problemOrderFilterOwner', 'problemOrderFilterFrom', 'problemOrderFilterTo', 'problemOrderSearchBox'].forEach((id) => {
+    el(id).addEventListener('input', () => {
+      problemOrdersPage = 1;
+      renderProblemOrdersTable();
+    });
+  });
+  el('problemOrderFilterDateBasis').addEventListener('change', () => {
+    problemOrdersPage = 1;
+    renderProblemOrdersTable();
+  });
+  wireMultiselect('problemOrderProduct', PROBLEM_ORDER_PRODUCT_MULTISELECT, () => {
+    problemOrdersPage = 1;
+    renderProblemOrdersTable();
+  });
+  el('problemOrdersPrevBtn').addEventListener('click', () => {
+    problemOrdersPage -= 1;
+    renderProblemOrdersTable();
+  });
+  el('problemOrdersNextBtn').addEventListener('click', () => {
+    problemOrdersPage += 1;
+    renderProblemOrdersTable();
+  });
+  el('problemOrdersPageSize').value = problemOrdersPageSize;
+  el('problemOrdersPageSize').addEventListener('change', () => {
+    problemOrdersPageSize = Number(el('problemOrdersPageSize').value) || 10;
+    savePageSize('problemOrders', problemOrdersPageSize);
+    problemOrdersPage = 1;
+    renderProblemOrdersTable();
+  });
+  el('problemOrdersSelectAllCheckbox').addEventListener('change', () => {
+    const checked = el('problemOrdersSelectAllCheckbox').checked;
+    document.querySelectorAll('.problem-order-row-checkbox').forEach((cb) => {
+      cb.checked = checked;
+      if (checked) selectedProblemOrderIds.add(cb.dataset.id);
+      else selectedProblemOrderIds.delete(cb.dataset.id);
+    });
+    updateProblemOrdersSelectionUi();
+  });
+  el('problemOrdersDeleteSelectedBtn').addEventListener('click', deleteSelectedProblemOrders);
+
   el('adsRefreshBtn').addEventListener('click', reloadAdsPageData);
   el('adImportBtn').addEventListener('click', importAds);
   ['adFilterStatus', 'adFilterFrom', 'adFilterTo', 'adSearchBox'].forEach((id) => {
@@ -3255,6 +3514,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupColumnVisibility({ tableId: 'chatTable', multiId: 'kontakColumnMulti', toggleId: 'kontakColumnToggle', panelId: 'kontakColumnPanel' });
   setupColumnVisibility({ tableId: 'productsTable', multiId: 'produkColumnMulti', toggleId: 'produkColumnToggle', panelId: 'produkColumnPanel' });
   setupColumnVisibility({ tableId: 'ordersTable', multiId: 'ordersColumnMulti', toggleId: 'ordersColumnToggle', panelId: 'ordersColumnPanel' });
+  setupColumnVisibility({ tableId: 'problemOrdersTable', multiId: 'problemOrdersColumnMulti', toggleId: 'problemOrdersColumnToggle', panelId: 'problemOrdersColumnPanel' });
   setupColumnVisibility({ tableId: 'preOrdersTable', multiId: 'preOrdersColumnMulti', toggleId: 'preOrdersColumnToggle', panelId: 'preOrdersColumnPanel' });
   setupColumnVisibility({ tableId: 'adsTable', multiId: 'adsColumnMulti', toggleId: 'adsColumnToggle', panelId: 'adsColumnPanel' });
   initLaporanProvinceTables();

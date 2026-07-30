@@ -68,6 +68,30 @@ const orderSchema = new mongoose.Schema(
     problemBuktiKurir: String, // Bukti Kurir - raw comma/newline-separated URL list as given
     problemRiwayat: String, // Last 5 Problem Detail - raw multi-line history text
     problemUpdatedAt: Date, // Tanggal Update Terakhir
+
+    // Confirmed-sent follow-up log (see wa-ektension's floating panel
+    // "Riwayat Follow Up") - a CS picking a template in the extension only
+    // saves a pending entry locally in chrome.storage first; nothing lands
+    // here until the CS explicitly marks it "Sudah Dikirim", so this array
+    // only ever holds genuinely-sent follow-ups, never every template click.
+    // No per-CS identity is tracked (the extension has no per-CS login,
+    // only the shared API key) - ownerNumber (which WA account sent it) is
+    // the closest attribution available.
+    // Explicit sub-schema (not the plain-object array shorthand) with its
+    // own `_id: true` - the shorthand form otherwise inherits the parent
+    // Order schema's `_id: false` (Order itself uses a custom string _id),
+    // which would silently leave every follow-up entry with no id to
+    // reference for the undo/delete route below.
+    followUps: [
+      new mongoose.Schema(
+        {
+          templateLabel: String,
+          sentAt: Date,
+          ownerNumber: String,
+        },
+        { _id: true }
+      ),
+    ],
   },
   { timestamps: true, _id: false }
 );
