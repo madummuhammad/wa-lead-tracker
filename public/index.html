@@ -1438,10 +1438,15 @@
         <p class="hint">
           Template ini muncul sebagai pilihan di badge chat WhatsApp (lewat
           extension) yang punya Pra-Pesanan aktif, buat ngasih kabar ke
-          pelanggan kalau pesanannya sedang diproses. Pakai <code>{{nama}}</code>
-          di isi pesan - otomatis diganti nama kontak WhatsApp saat template
-          dipilih di extension. Memilih template di extension langsung
-          mengisi kolom chat WhatsApp, belum mengirim apa-apa.
+          pelanggan kalau pesanannya sedang diproses - juga muncul di panel
+          "💰 Hitung Harga" ekstensi untuk mengirim rincian harga. Pakai
+          <code>{{nama}}</code> untuk nama kontak WhatsApp, atau (khusus
+          dipilih dari panel Hitung Harga) <code>{{harga}}</code>,
+          <code>{{ongkir}}</code>, dan <code>{{total}}</code> untuk hasil
+          kalkulasi harga produk + ongkir - kosong kalau template ini dipilih
+          dari tempat lain yang tidak punya data harga tersebut. Memilih
+          template di extension langsung mengisi kolom chat WhatsApp, belum
+          mengirim apa-apa.
         </p>
 
         <section class="table-wrap">
@@ -1474,7 +1479,7 @@
                 </label>
                 <label class="form-field form-field-wide">
                   <span>Isi Pesan</span>
-                  <textarea id="templateText" rows="5" placeholder="Isi pesan... gunakan {{nama}} untuk nama pelanggan"></textarea>
+                  <textarea id="templateText" rows="5" placeholder="Isi pesan... gunakan {{nama}}, atau {{harga}}/{{ongkir}}/{{total}} untuk template Hitung Harga"></textarea>
                 </label>
               </div>
             </div>
