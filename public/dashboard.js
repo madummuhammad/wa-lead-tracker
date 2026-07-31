@@ -465,6 +465,16 @@ function formatSignedRupiah(value) {
   return `${num < 0 ? '-' : ''}Rp ${Math.abs(num).toLocaleString('id-ID')}`;
 }
 
+// A money figure by itself doesn't say whether it came from 2 orders or 40 -
+// pairs the formatted Rupiah with a small count line right underneath (see
+// Laporan's "Performa per Produk" table). `count` should always be the
+// number of orders that specific figure was actually summed from, not the
+// row's overall Total Pesanan - see the *Count fields on GET
+// /api/laporan/stats' productBreakdown for which count matches which column.
+function moneyWithCount(formattedValue, count) {
+  return `${formattedValue}<div class="cell-subcount">${escapeHtml(count)} pesanan</div>`;
+}
+
 // Satu card profit per status pesanan - sama polanya dengan
 // renderOmsetByStatusCards, ditambah highlight merah kalau profitnya negatif
 // (status Return, yang dihitung rugi penuh - lihat komentar di app.js).
@@ -2923,15 +2933,15 @@ function renderLaporanProductBreakdownRows(productBreakdown) {
         <td>${i + 1}</td>
         <td>${escapeHtml(p.productName)}</td>
         <td>${escapeHtml(p.totalPesanan)}</td>
-        <td>${formatRupiah(p.omset)}</td>
+        <td>${moneyWithCount(formatRupiah(p.omset), p.omsetCount)}</td>
         <td>${formatRupiah(p.biayaIklan)}</td>
-        <td>${formatRupiah(p.hpp)}</td>
-        <td>${formatSignedRupiah(p.profit)}</td>
-        <td>${formatSignedRupiah(p.realizedProfit)}</td>
-        <td>${formatRupiah(p.omsetDiterima)}</td>
-        <td>${formatRupiah(p.omsetReturn)}</td>
-        <td>${formatRupiah(p.biayaRetur)}</td>
-        <td>${formatRupiah(p.potensiRTS)}</td>
+        <td>${moneyWithCount(formatRupiah(p.hpp), p.omsetCount)}</td>
+        <td>${moneyWithCount(formatSignedRupiah(p.profit), p.omsetCount)}</td>
+        <td>${moneyWithCount(formatSignedRupiah(p.realizedProfit), p.realizedCount)}</td>
+        <td>${moneyWithCount(formatRupiah(p.omsetDiterima), p.realizedCount)}</td>
+        <td>${moneyWithCount(formatRupiah(p.omsetReturn), p.returnCount)}</td>
+        <td>${moneyWithCount(formatRupiah(p.biayaRetur), p.returnCount)}</td>
+        <td>${moneyWithCount(formatRupiah(p.potensiRTS), p.problematicCount)}</td>
       </tr>`)
     .join('');
   el('laporanProductBreakdownEmptyState').classList.toggle('hidden', all.length > 0);
@@ -2947,6 +2957,8 @@ function renderLaporanProvinceReturnRows(returnRateByProvince) {
         <td>${i + 1}</td>
         <td>${escapeHtml(p.province)}</td>
         <td>${escapeHtml(p.total)}</td>
+        <td>${escapeHtml(p.successCount)}</td>
+        <td>${escapeHtml(p.successRate)}%</td>
         <td>${escapeHtml(p.returnCount)}</td>
         <td>${escapeHtml(p.rate)}%</td>
         <td>${escapeHtml(p.problemCount)}</td>

@@ -2000,10 +2000,15 @@ function createApp() {
       const provinceMap = new Map();
       filteredOrders.forEach((o) => {
         const province = o.province || '(Tidak Diketahui)';
-        const entry = provinceMap.get(province) || { province, count: 0, returnCount: 0, problemCount: 0 };
+        const entry = provinceMap.get(province) || { province, count: 0, returnCount: 0, problemCount: 0, successCount: 0 };
         entry.count += 1;
         if (o.status === 'Return') entry.returnCount += 1;
         if (isProblematicOrder(o)) entry.problemCount += 1;
+        // "Sukses" = sudah Diterima - same status the Dashboard funnel's own
+        // deliveredCount uses, the only status that's an unambiguous finished
+        // success (Dalam Pengiriman/Menunggu Dijemput are still in flight,
+        // Return/Dibatalkan are the opposite of success).
+        if (o.status === 'Diterima') entry.successCount += 1;
         provinceMap.set(province, entry);
       });
       const returnRateByProvince = Array.from(provinceMap.values())
@@ -2014,6 +2019,8 @@ function createApp() {
           rate: e.count > 0 ? Math.round((e.returnCount / e.count) * 1000) / 10 : 0,
           problemCount: e.problemCount,
           problemRate: e.count > 0 ? Math.round((e.problemCount / e.count) * 1000) / 10 : 0,
+          successCount: e.successCount,
+          successRate: e.count > 0 ? Math.round((e.successCount / e.count) * 1000) / 10 : 0,
         }))
         .sort((a, b) => b.rate - a.rate);
 
@@ -2027,12 +2034,24 @@ function createApp() {
       // a product filter is active).
       const productNameById = new Map(products.map((p) => [String(p._id), p.name]));
 
+      // Paired "*Count" fields alongside each money figure below - how many
+      // orders that Rupiah amount was actually summed from, so the table can
+      // show it right under the number (a product with a huge Omset from 2
+      // orders reads very differently than the same Omset from 40). Each
+      // count mirrors the exact same row filter as the money field next to
+      // it, not just the overall totalPesanan: omsetCount for Omset/HPP/
+      // Profit (all share the same "not Dibatalkan" condition), realizedCount
+      // for Profit Terealisasi/Omset Diterima, returnCount for Omset Return/
+      // Biaya Retur, problematicCount for Potensi RTS. Biaya Iklan has no
+      // equivalent - it's ad spend aggregated from AdSpend rows, not summed
+      // per order - so it's deliberately left without a count.
       const orderStatsByProduct = new Map();
       filteredOrders.forEach((o) => {
         const name = o.productName || '(Tanpa Produk)';
         const entry = orderStatsByProduct.get(name) || {
           totalPesanan: 0, omset: 0, hpp: 0, profitFromOrders: 0, realizedProfitFromOrders: 0,
           omsetDiterima: 0, omsetReturn: 0, biayaRetur: 0, potensiRTS: 0,
+          omsetCount: 0, realizedCount: 0, returnCount: 0, problematicCount: 0,
         };
         entry.totalPesanan += 1;
         if (o.status !== 'Dibatalkan') {
@@ -2040,9 +2059,11 @@ function createApp() {
           entry.omset += orderRealPrice(o);
           entry.hpp += hppCost;
           entry.profitFromOrders += o.status === 'Return' ? -((o.shippingCost || 0) + hppCost) : (orderRealPrice(o) - hppCost);
+          entry.omsetCount += 1;
           if (o.status === 'Diterima' && o.reconciliationStatus === 'Sudah Rekonsiliasi') {
             entry.realizedProfitFromOrders += orderRealPrice(o) - hppCost;
             entry.omsetDiterima += orderRealPrice(o);
+            entry.realizedCount += 1;
           }
           if (o.status === 'Return') {
             // Same shape as Omset for every other status (orderRealPrice,
@@ -2058,10 +2079,12 @@ function createApp() {
             // different card with a different question (total loss on the
             // order) than this one (just the shipping invoice).
             entry.biayaRetur += o.ongkirPulang ?? o.shippingCost ?? 0;
+            entry.returnCount += 1;
           }
         }
         if (isProblematicOrder(o)) {
           entry.potensiRTS += o.potensiRTS || 0;
+          entry.problematicCount += 1;
         }
         orderStatsByProduct.set(name, entry);
       });
@@ -2081,6 +2104,7 @@ function createApp() {
           const stats = orderStatsByProduct.get(name) || {
             totalPesanan: 0, omset: 0, hpp: 0, profitFromOrders: 0, realizedProfitFromOrders: 0,
             omsetDiterima: 0, omsetReturn: 0, biayaRetur: 0, potensiRTS: 0,
+            omsetCount: 0, realizedCount: 0, returnCount: 0, problematicCount: 0,
           };
           const biayaIklan = adSpendByProduct.get(name) || 0;
           return {
@@ -2095,6 +2119,12 @@ function createApp() {
             omsetReturn: stats.omsetReturn,
             biayaRetur: stats.biayaRetur,
             potensiRTS: stats.potensiRTS,
+            // See the comment above orderStatsByProduct's declaration for
+            // what each of these actually counts.
+            omsetCount: stats.omsetCount,
+            realizedCount: stats.realizedCount,
+            returnCount: stats.returnCount,
+            problematicCount: stats.problematicCount,
           };
         })
         .sort((a, b) => b.omset - a.omset);

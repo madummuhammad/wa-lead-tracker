@@ -566,6 +566,16 @@ th.sortable-col {
 }
 th.sortable-col:hover { color: var(--ink); background: #f0f2f3; }
 th.sortable-col .sort-arrow { margin-left: 4px; color: var(--ink-faint); }
+
+/* Small "N pesanan" line under a money figure (see moneyWithCount in
+   dashboard.js, used by Laporan's "Performa per Produk" table) - context for
+   the number above it without needing a separate column. */
+.cell-subcount {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
 th.sortable-col.sort-active .sort-arrow { color: var(--brand); }
 tbody tr:hover { background: #fafcfb; }
 
