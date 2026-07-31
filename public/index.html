@@ -1442,9 +1442,11 @@
           "💰 Hitung Harga" ekstensi untuk mengirim rincian harga. Pakai
           <code>{{nama}}</code> untuk nama kontak WhatsApp, atau (khusus
           dipilih dari panel Hitung Harga) <code>{{harga}}</code>,
-          <code>{{ongkir}}</code>, dan <code>{{total}}</code> untuk hasil
-          kalkulasi harga produk + ongkir - kosong kalau template ini dipilih
-          dari tempat lain yang tidak punya data harga tersebut. Memilih
+          <code>{{ongkir}}</code>, <code>{{total}}</code>, <code>{{diskon}}</code>
+          (persentase, angka polos), dan <code>{{hargaDiskon}}</code> untuk
+          hasil kalkulasi harga produk + ongkir + diskon - kosong kalau
+          template ini dipilih dari tempat lain yang tidak punya data harga
+          tersebut. Memilih
           template di extension langsung mengisi kolom chat WhatsApp, belum
           mengirim apa-apa.
         </p>
@@ -1479,7 +1481,7 @@
                 </label>
                 <label class="form-field form-field-wide">
                   <span>Isi Pesan</span>
-                  <textarea id="templateText" rows="5" placeholder="Isi pesan... gunakan {{nama}}, atau {{harga}}/{{ongkir}}/{{total}} untuk template Hitung Harga"></textarea>
+                  <textarea id="templateText" rows="5" placeholder="Isi pesan... gunakan {{nama}}, atau {{harga}}/{{ongkir}}/{{total}}/{{diskon}}/{{hargaDiskon}} untuk template Hitung Harga"></textarea>
                 </label>
               </div>
             </div>

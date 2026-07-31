@@ -317,6 +317,28 @@ function escapeHtml(str) {
   }[c]));
 }
 
+// Generic "show something happened" wrapper for the "⟳ Muat Ulang" buttons on
+// every page - previously clicking one gave no feedback on the button itself,
+// the only sign anything happened was a separate "Memuat data..." notice
+// elsewhere on the page (easy to miss, and not visible at all on pages like
+// Laporan that have no such notice). Now the button spins and disables right
+// where the user's cursor already is, then restores its exact original
+// markup regardless of success/failure - fn's own try/catch (every load
+// function already has one) is what surfaces an actual error.
+async function withButtonLoading(btn, fn) {
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.classList.add('btn-loading');
+  btn.innerHTML = '<span class="btn-spin-icon">⟳</span> Memuat...';
+  try {
+    await fn();
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+    btn.innerHTML = originalHtml;
+  }
+}
+
 // "Last 5 Problem Detail" from the problem-tracking import is a raw
 // multi-line "[date] message" history - render each line separately instead
 // of collapsing the newlines into one run-on line.
@@ -3252,9 +3274,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  el('refreshBtn').addEventListener('click', loadData);
-  el('dashRefreshBtn').addEventListener('click', loadData);
-  el('ordersRefreshBtn').addEventListener('click', loadOrders);
+  el('refreshBtn').addEventListener('click', () => withButtonLoading(el('refreshBtn'), loadData));
+  el('dashRefreshBtn').addEventListener('click', () => withButtonLoading(el('dashRefreshBtn'), loadData));
+  el('ordersRefreshBtn').addEventListener('click', () => withButtonLoading(el('ordersRefreshBtn'), loadOrders));
 
   ['orderFilterStatus', 'orderFilterOwner', 'orderFilterFrom', 'orderFilterTo', 'orderSearchBox'].forEach((id) => {
     el(id).addEventListener('input', () => {
@@ -3274,7 +3296,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     ordersPage = 1;
     renderOrdersTable();
   });
-  el('preOrdersRefreshBtn').addEventListener('click', reloadPreOrdersPageData);
+  el('preOrdersRefreshBtn').addEventListener('click', () => withButtonLoading(el('preOrdersRefreshBtn'), reloadPreOrdersPageData));
   ['preOrderFilterCreator', 'preOrderFilterOwner', 'preOrderFilterFrom', 'preOrderFilterTo', 'preOrderFilterDateBasis', 'preOrderFilterNotifyStatus', 'preOrderFilterResponseStatus', 'preOrderFilterAneka', 'preOrderSearchBox'].forEach((id) => {
     el(id).addEventListener('input', () => {
       preOrdersPage = 1;
@@ -3329,7 +3351,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ---- Pesanan Bermasalah - same wiring pattern as Pesanan above, own
   // page/pageSize/selection state, but orderSaveBtn/orderCancelEditBtn/
   // orderFormCloseBtn above already cover the shared edit modal for both. ----
-  el('problemOrdersRefreshBtn').addEventListener('click', loadOrders);
+  el('problemOrdersRefreshBtn').addEventListener('click', () => withButtonLoading(el('problemOrdersRefreshBtn'), loadOrders));
   ['problemOrderFilterStatus', 'problemOrderFilterOwner', 'problemOrderFilterFrom', 'problemOrderFilterTo', 'problemOrderSearchBox'].forEach((id) => {
     el(id).addEventListener('input', () => {
       problemOrdersPage = 1;
@@ -3370,7 +3392,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   el('problemOrdersDeleteSelectedBtn').addEventListener('click', deleteSelectedProblemOrders);
 
-  el('adsRefreshBtn').addEventListener('click', reloadAdsPageData);
+  el('adsRefreshBtn').addEventListener('click', () => withButtonLoading(el('adsRefreshBtn'), reloadAdsPageData));
   el('adImportBtn').addEventListener('click', importAds);
   ['adFilterStatus', 'adFilterFrom', 'adFilterTo', 'adSearchBox'].forEach((id) => {
     el(id).addEventListener('input', () => {
@@ -3408,7 +3430,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   el('adsDeleteSelectedBtn').addEventListener('click', deleteSelectedAds);
 
-  el('laporanRefreshBtn').addEventListener('click', renderLaporan);
+  el('laporanRefreshBtn').addEventListener('click', () => withButtonLoading(el('laporanRefreshBtn'), renderLaporan));
   el('laporanFilterQuickRange').addEventListener('change', applyLaporanQuickRange);
   el('laporanFilterDateBasis').addEventListener('change', renderLaporan);
   ['laporanFilterOwner', 'laporanFilterCreator', 'laporanFilterFrom', 'laporanFilterTo'].forEach((id) => {

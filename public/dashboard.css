@@ -230,6 +230,22 @@ body {
 .btn-outline:hover { background: var(--brand-tint); }
 .btn-outline:disabled { opacity: 0.6; cursor: default; }
 
+/* "⟳ Muat Ulang" buttons across every page (Dashboard, Kontak, Pesanan,
+   Pesanan Bermasalah, Pra-Pesanan, Iklan, Laporan) - see withButtonLoading in
+   dashboard.js. Previously these gave zero feedback on click (the only sign
+   anything happened was a separate "Memuat data..." notice elsewhere on the
+   page, easy to miss); now the button itself spins and disables right where
+   the user just clicked. */
+.btn-loading { cursor: wait !important; }
+.btn-loading .btn-spin-icon {
+  display: inline-block;
+  animation: btn-spin 0.8s linear infinite;
+}
+@keyframes btn-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .btn-primary {
   padding: 7px 14px;
   border: none;
