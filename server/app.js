@@ -2115,6 +2115,16 @@ function createApp() {
             hpp: stats.hpp,
             profit: stats.profitFromOrders - biayaIklan,
             realizedProfit: stats.realizedProfitFromOrders - biayaIklan,
+            // Profit Diterima: order-level profit (Omset Diterima - HPP) of
+            // just the Diterima + Sudah Rekonsiliasi orders, WITHOUT
+            // subtracting Biaya Iklan - the order-only counterpart to Omset
+            // Diterima, same way Profit is Omset's order-only counterpart.
+            // Deliberately distinct from Profit Terealisasi (realizedProfit
+            // above), which is this same figure minus Biaya Iklan - Biaya
+            // Iklan is a campaign-level cost, not tied to any one order, so
+            // this column isolates what the delivered orders themselves
+            // actually made before that campaign cost is netted out.
+            profitDiterima: stats.realizedProfitFromOrders,
             omsetDiterima: stats.omsetDiterima,
             omsetReturn: stats.omsetReturn,
             biayaRetur: stats.biayaRetur,

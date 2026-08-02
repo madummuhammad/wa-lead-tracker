@@ -2938,6 +2938,7 @@ function renderLaporanProductBreakdownRows(productBreakdown) {
         <td>${moneyWithCount(formatRupiah(p.hpp), p.omsetCount)}</td>
         <td>${moneyWithCount(formatSignedRupiah(p.profit), p.omsetCount)}</td>
         <td>${moneyWithCount(formatSignedRupiah(p.realizedProfit), p.realizedCount)}</td>
+        <td>${moneyWithCount(formatSignedRupiah(p.profitDiterima), p.realizedCount)}</td>
         <td>${moneyWithCount(formatRupiah(p.omsetDiterima), p.realizedCount)}</td>
         <td>${moneyWithCount(formatRupiah(p.omsetReturn), p.returnCount)}</td>
         <td>${moneyWithCount(formatRupiah(p.biayaRetur), p.returnCount)}</td>
