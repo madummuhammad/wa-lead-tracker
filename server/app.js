@@ -1899,6 +1899,20 @@ function createApp() {
       const ownerNumber = req.query.ownerNumber && req.query.ownerNumber !== 'all' ? req.query.ownerNumber : null;
       const productNames = (Array.isArray(req.query.productName) ? req.query.productName : req.query.productName ? [req.query.productName] : [])
         .filter((p) => p && p !== 'all');
+      // Order.province ("Provinsi" penerima, from the Pesanan import) - same
+      // "Order-only" limitation as ownerNumber/productName have elsewhere:
+      // Chat/PreOrder carry no province of their own, so this can only ever
+      // narrow order-derived numbers (Omset/HPP/Profit/productBreakdown),
+      // never Chat Masuk or anything PreOrder-based. May repeat
+      // (?province=A&province=B) for a multi-select filter, same as productName.
+      const provinces = (Array.isArray(req.query.province) ? req.query.province : req.query.province ? [req.query.province] : [])
+        .filter((p) => p && p !== 'all');
+      // AdSpend.campaignId - narrows just the Total Biaya Iklan card (and
+      // Iklan-derived numbers within it, e.g. Biaya Iklan in Performa per
+      // Produk) to specific Meta Ads campaigns. Doesn't touch Order/Chat/
+      // PreOrder at all - a campaign has no equivalent concept there.
+      const campaignIds = (Array.isArray(req.query.campaignId) ? req.query.campaignId : req.query.campaignId ? [req.query.campaignId] : [])
+        .filter((c) => c && c !== 'all');
       // createdByEmail (CS) is accepted for filter-bar consistency with
       // Dashboard, but - same as there - Order has no CS/creator field, so
       // it can't narrow Total Omset; and AdSpend has no CS concept either.
@@ -1933,6 +1947,7 @@ function createApp() {
       const filteredOrders = orders.filter((o) =>
         (!ownerNumber || (o.ownerNumber || '') === ownerNumber) &&
         (productNames.length === 0 || productNames.includes(o.productName || '')) &&
+        (provinces.length === 0 || provinces.includes(o.province || '')) &&
         withinDateFilter(orderDateForFilter(o))
       );
       // Same formula as the Dashboard/Pesanan Omset cards - Nilai COD minus
@@ -1959,6 +1974,7 @@ function createApp() {
       );
       const filteredAdSpends = adSpends.filter((a) =>
         (productNames.length === 0 || (a.productId && productIdsByName.has(String(a.productId)))) &&
+        (campaignIds.length === 0 || campaignIds.includes(a.campaignId)) &&
         withinDateFilter(a.date)
       );
       const totalBiayaIklan = filteredAdSpends.reduce((sum, a) => sum + (a.spend || 0), 0);
@@ -2152,6 +2168,19 @@ function createApp() {
           ...preOrders.map((p) => p.productName),
         ].filter(Boolean))).sort(),
         creators: Array.from(new Set(preOrders.map((p) => p.createdByEmail).filter(Boolean))).sort(),
+        provinces: Array.from(new Set(orders.map((o) => o.province).filter(Boolean))).sort(),
+        // Distinct campaigns for the Total Biaya Iklan multiselect - from the
+        // *unfiltered* adSpends (same "dropdown never shrinks" rule as every
+        // other filterOptions list here), one row per campaignId even though
+        // AdSpend itself has one row per campaign per day.
+        campaigns: Array.from(
+          adSpends.reduce((map, a) => {
+            if (a.campaignId && !map.has(a.campaignId)) map.set(a.campaignId, a.campaignName || a.campaignId);
+            return map;
+          }, new Map())
+        )
+          .map(([campaignId, campaignName]) => ({ campaignId, campaignName }))
+          .sort((a, b) => a.campaignName.localeCompare(b.campaignName)),
       };
 
       res.json({
@@ -2175,6 +2204,14 @@ function createApp() {
       const productNames = (Array.isArray(req.query.productName) ? req.query.productName : req.query.productName ? [req.query.productName] : [])
         .filter((p) => p && p !== 'all');
       const createdByEmail = req.query.createdByEmail && req.query.createdByEmail !== 'all' ? req.query.createdByEmail : null;
+      // Order.province ("Provinsi" penerima, from the Pesanan import) - same
+      // "Order-only" limitation as ownerNumber/productName have elsewhere:
+      // Chat/PreOrder carry no province of their own, so this can only ever
+      // narrow order-derived numbers, never Chat Masuk/Closing Rate or
+      // anything PreOrder-based. May repeat (?province=A&province=B) for a
+      // multi-select filter, same as productName.
+      const provinces = (Array.isArray(req.query.province) ? req.query.province : req.query.province ? [req.query.province] : [])
+        .filter((p) => p && p !== 'all');
       // Same 'order'/'lead' toggle as Laporan - see the comment there. Only
       // affects Order (createdDate) and PreOrder (orderDate), which each have
       // a native date of their own to switch away from; a Chat/lead itself
@@ -2220,6 +2257,7 @@ function createApp() {
       const filteredOrders = orders.filter((o) =>
         (!ownerNumber || (o.ownerNumber || '') === ownerNumber) &&
         (productNames.length === 0 || productNames.includes(o.productName || '')) &&
+        (provinces.length === 0 || provinces.includes(o.province || '')) &&
         withinDateFilter(orderDateForFilter(o))
       );
       const filteredPreOrders = preOrders.filter((p) =>
@@ -2471,6 +2509,7 @@ function createApp() {
           ...preOrders.map((p) => p.productName),
         ].filter(Boolean))).sort(),
         creators: Array.from(new Set(preOrders.map((p) => p.createdByEmail).filter(Boolean))).sort(),
+        provinces: Array.from(new Set(orders.map((o) => o.province).filter(Boolean))).sort(),
       };
 
       res.json({

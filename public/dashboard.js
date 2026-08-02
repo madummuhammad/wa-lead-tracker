@@ -177,37 +177,63 @@ function withinDateRange(dateValue, from, to) {
 // Generic checkbox multi-select ("Semua ..." + one row per option), shared by
 // the Pesanan and Pra-Pesanan Produk filters. (Dashboard's own Produk filter
 // predates this and keeps its separate, already-shipped implementation.)
-const multiselectSelections = {}; // name -> Set<string>
+const multiselectSelections = {}; // name -> Set<string> of selected values
+// name -> Map<value, displayLabel> - only populated (non-identity) when
+// renderMultiselectPanel is handed {value, label} objects instead of plain
+// strings (see the Kampanye filter, where the filterable value is
+// AdSpend.campaignId - an 18-digit id, unfit to show in the toggle button -
+// but the display text needs to be the human campaignName instead).
+const multiselectLabels = {};
 
 function getMultiselectSelection(name) {
   if (!multiselectSelections[name]) multiselectSelections[name] = new Set();
   return multiselectSelections[name];
 }
 
+// ids.label is the plain-Indonesian noun this multiselect picks from
+// ("produk", "provinsi", "kampanye", ...) - defaults to "produk" so every
+// pre-existing caller above (which predates this field) keeps behaving
+// exactly as before without needing to be touched.
 function updateMultiselectToggleLabel(name, ids) {
   const selected = getMultiselectSelection(name);
+  const label = ids.label || 'produk';
   const btn = el(ids.toggle);
-  if (selected.size === 0) btn.textContent = 'Semua produk';
-  else if (selected.size === 1) btn.textContent = chartTruncate(Array.from(selected)[0], 22);
-  else btn.textContent = `${selected.size} produk dipilih`;
+  if (selected.size === 0) {
+    btn.textContent = `Semua ${label}`;
+  } else if (selected.size === 1) {
+    const value = Array.from(selected)[0];
+    const displayLabel = (multiselectLabels[name] && multiselectLabels[name].get(value)) ?? value;
+    btn.textContent = chartTruncate(displayLabel, 22);
+  } else {
+    btn.textContent = `${selected.size} ${label} dipilih`;
+  }
 }
 
+// `options` is normally an array of plain strings (used as both the
+// filterable value and the display text - Produk/Provinsi/etc), but may
+// instead be an array of {value, label} objects when the two need to differ
+// (see multiselectLabels above).
 function renderMultiselectPanel(name, ids, options) {
+  const normalized = options.map((o) => (typeof o === 'string' ? { value: o, label: o } : o));
+  multiselectLabels[name] = new Map(normalized.map((o) => [o.value, o.label]));
+
   // Drop selections for values that no longer exist in the current data.
-  const pruned = new Set(Array.from(getMultiselectSelection(name)).filter((v) => options.includes(v)));
+  const validValues = new Set(normalized.map((o) => o.value));
+  const pruned = new Set(Array.from(getMultiselectSelection(name)).filter((v) => validValues.has(v)));
   multiselectSelections[name] = pruned;
 
+  const label = ids.label || 'produk';
   const panel = el(ids.panel);
   panel.innerHTML = `
     <label class="multiselect-option">
       <input type="checkbox" id="${ids.all}" ${pruned.size === 0 ? 'checked' : ''} />
-      Semua produk
+      Semua ${label}
     </label>
     <div class="multiselect-divider"></div>
-    ${options.map((o) => `
+    ${normalized.map((o) => `
       <label class="multiselect-option">
-        <input type="checkbox" class="multiselect-item" value="${escapeHtml(o)}" ${pruned.has(o) ? 'checked' : ''} />
-        ${escapeHtml(o)}
+        <input type="checkbox" class="multiselect-item" value="${escapeHtml(o.value)}" ${pruned.has(o.value) ? 'checked' : ''} />
+        ${escapeHtml(o.label)}
       </label>`).join('')}
   `;
   updateMultiselectToggleLabel(name, ids);
@@ -400,6 +426,15 @@ function populateOwnerSelect(select) {
 }
 
 // ---- Dashboard page: cards + charts, aggregated server-side ----
+
+// Uses the generic multiselect (getMultiselectSelection/renderMultiselectPanel/
+// wireMultiselect) - unlike Dashboard's own Produk filter above, which
+// predates that generic system and keeps its separate, already-shipped
+// dashSelectedProducts implementation instead of being migrated onto it.
+const DASH_PROVINCE_MULTISELECT = {
+  multi: 'dashFilterProvinceMulti', toggle: 'dashFilterProvinceToggle',
+  panel: 'dashFilterProvincePanel', all: 'dashFilterProvinceAll', label: 'provinsi',
+};
 
 function populateDashboardFilterSelect(select, options, placeholderLabel) {
   const previousValue = select.value || 'all';
@@ -606,11 +641,13 @@ async function renderDashboard() {
     if (to) params.set('to', to);
     if (dateBasis && dateBasis !== 'order') params.set('dateBasis', dateBasis);
     if (owner && owner !== 'all') params.set('ownerNumber', owner);
+    getMultiselectSelection('dashProvince').forEach((p) => params.append('province', p));
     dashSelectedProducts.forEach((p) => params.append('productName', p));
     if (creator && creator !== 'all') params.set('createdByEmail', creator);
 
     const stats = await apiGet(`/api/dashboard/stats?${params.toString()}`);
     populateDashboardFilterSelect(el('dashFilterOwner'), stats.filterOptions.owners, 'Semua akun');
+    renderMultiselectPanel('dashProvince', DASH_PROVINCE_MULTISELECT, stats.filterOptions.provinces);
     populateDashboardProductPanel(stats.filterOptions.products);
     populateDashboardFilterSelect(el('dashFilterCreator'), stats.filterOptions.creators, 'Semua CS');
     renderDashboardCards(stats.cards);
@@ -991,6 +1028,14 @@ const PROBLEM_ORDER_PRODUCT_MULTISELECT = {
   multi: 'problemOrderFilterProductMulti', toggle: 'problemOrderFilterProductToggle',
   panel: 'problemOrderFilterProductPanel', all: 'problemOrderFilterProductAll',
 };
+const ORDER_PROVINCE_MULTISELECT = {
+  multi: 'orderFilterProvinceMulti', toggle: 'orderFilterProvinceToggle',
+  panel: 'orderFilterProvincePanel', all: 'orderFilterProvinceAll', label: 'provinsi',
+};
+const PROBLEM_ORDER_PROVINCE_MULTISELECT = {
+  multi: 'problemOrderFilterProvinceMulti', toggle: 'problemOrderFilterProvinceToggle',
+  panel: 'problemOrderFilterProvincePanel', all: 'problemOrderFilterProvinceAll', label: 'provinsi',
+};
 
 function populateOrderStatusSelect(select) {
   const statuses = Array.from(new Set(allOrders.map((o) => o.status).filter(Boolean))).sort();
@@ -1024,6 +1069,8 @@ function renderOrdersTable() {
   populateOrderOwnerSelect(el('orderFilterOwner'));
   const orderProductNames = Array.from(new Set(allOrders.map((o) => o.productName).filter(Boolean))).sort();
   renderMultiselectPanel('orderProduct', ORDER_PRODUCT_MULTISELECT, orderProductNames);
+  const orderProvinces = Array.from(new Set(allOrders.map((o) => o.province).filter(Boolean))).sort();
+  renderMultiselectPanel('orderProvince', ORDER_PROVINCE_MULTISELECT, orderProvinces);
 
   const statusFilter = el('orderFilterStatus').value;
   const ownerFilter = el('orderFilterOwner').value;
@@ -1032,12 +1079,14 @@ function renderOrdersTable() {
   const dateBasis = el('orderFilterDateBasis').value;
   const problemStatusFilter = el('orderFilterProblemStatus').value;
   const selectedProducts = getMultiselectSelection('orderProduct');
+  const selectedProvinces = getMultiselectSelection('orderProvince');
   const q = el('orderSearchBox').value.trim().toLowerCase();
 
   const filtered = allOrders.filter((order) => {
     if (statusFilter !== 'all' && (order.status || '') !== statusFilter) return false;
     if (ownerFilter !== 'all' && (order.ownerNumber || '') !== ownerFilter) return false;
     if (selectedProducts.size > 0 && !selectedProducts.has(order.productName || '')) return false;
+    if (selectedProvinces.size > 0 && !selectedProvinces.has(order.province || '')) return false;
     if (problemStatusFilter === 'problematic' && !isProblematicOrder(order)) return false;
     if (problemStatusFilter === 'normal' && isProblematicOrder(order)) return false;
     const dateToCheck = dateBasis === 'lead' ? order.leadDate : order.createdDate;
@@ -1232,6 +1281,8 @@ function renderProblemOrdersTable() {
   const problemOrders = allOrders.filter(isProblematicOrder);
   const productNames = Array.from(new Set(problemOrders.map((o) => o.productName).filter(Boolean))).sort();
   renderMultiselectPanel('problemOrderProduct', PROBLEM_ORDER_PRODUCT_MULTISELECT, productNames);
+  const provinces = Array.from(new Set(problemOrders.map((o) => o.province).filter(Boolean))).sort();
+  renderMultiselectPanel('problemOrderProvince', PROBLEM_ORDER_PROVINCE_MULTISELECT, provinces);
 
   const statusFilter = el('problemOrderFilterStatus').value;
   const ownerFilter = el('problemOrderFilterOwner').value;
@@ -1239,12 +1290,14 @@ function renderProblemOrdersTable() {
   const to = el('problemOrderFilterTo').value;
   const dateBasis = el('problemOrderFilterDateBasis').value;
   const selectedProducts = getMultiselectSelection('problemOrderProduct');
+  const selectedProvinces = getMultiselectSelection('problemOrderProvince');
   const q = el('problemOrderSearchBox').value.trim().toLowerCase();
 
   const filtered = problemOrders.filter((order) => {
     if (statusFilter !== 'all' && (order.status || '') !== statusFilter) return false;
     if (ownerFilter !== 'all' && (order.ownerNumber || '') !== ownerFilter) return false;
     if (selectedProducts.size > 0 && !selectedProducts.has(order.productName || '')) return false;
+    if (selectedProvinces.size > 0 && !selectedProvinces.has(order.province || '')) return false;
     const dateToCheck = dateBasis === 'lead' ? order.leadDate : order.createdDate;
     if (!withinDateRange(dateToCheck, from, to)) return false;
     if (q) {
@@ -2849,6 +2902,18 @@ const LAPORAN_PRODUCT_MULTISELECT = {
   multi: 'laporanFilterProductMulti', toggle: 'laporanFilterProductToggle',
   panel: 'laporanFilterProductPanel', all: 'laporanFilterProductAll',
 };
+const LAPORAN_PROVINCE_MULTISELECT = {
+  multi: 'laporanFilterProvinceMulti', toggle: 'laporanFilterProvinceToggle',
+  panel: 'laporanFilterProvincePanel', all: 'laporanFilterProvinceAll', label: 'provinsi',
+};
+// Options here are {value: campaignId, label: campaignName} pairs (see
+// renderMultiselectPanel) - filtering happens on the id, since campaignName
+// isn't guaranteed unique, but the id is a raw 18-digit number unfit to show
+// in the toggle button/panel by itself.
+const LAPORAN_CAMPAIGN_MULTISELECT = {
+  multi: 'laporanFilterCampaignMulti', toggle: 'laporanFilterCampaignToggle',
+  panel: 'laporanFilterCampaignPanel', all: 'laporanFilterCampaignAll', label: 'kampanye',
+};
 
 // Guards the laporanFilterFrom/laporanFilterTo 'input' listener from
 // resetting laporanFilterQuickRange back to "Kustom" when this function is
@@ -3056,13 +3121,20 @@ async function renderLaporan() {
     if (to) params.set('to', to);
     if (dateBasis && dateBasis !== 'order') params.set('dateBasis', dateBasis);
     if (owner && owner !== 'all') params.set('ownerNumber', owner);
+    getMultiselectSelection('laporanProvince').forEach((p) => params.append('province', p));
     getMultiselectSelection('laporanProduct').forEach((p) => params.append('productName', p));
+    getMultiselectSelection('laporanCampaign').forEach((c) => params.append('campaignId', c));
     if (creator && creator !== 'all') params.set('createdByEmail', creator);
 
     const stats = await apiGet(`/api/laporan/stats?${params.toString()}`);
     populateDashboardFilterSelect(el('laporanFilterOwner'), stats.filterOptions.owners, 'Semua akun');
     populateDashboardFilterSelect(el('laporanFilterCreator'), stats.filterOptions.creators, 'Semua CS');
+    renderMultiselectPanel('laporanProvince', LAPORAN_PROVINCE_MULTISELECT, stats.filterOptions.provinces);
     renderMultiselectPanel('laporanProduct', LAPORAN_PRODUCT_MULTISELECT, stats.filterOptions.products);
+    renderMultiselectPanel(
+      'laporanCampaign', LAPORAN_CAMPAIGN_MULTISELECT,
+      stats.filterOptions.campaigns.map((c) => ({ value: c.campaignId, label: c.campaignName }))
+    );
     renderLaporanCards(stats.cards);
     laporanProvinceReturnSortCtrl.update(stats.returnRateByProvince);
     laporanProductBreakdownSortCtrl.update(stats.productBreakdown);
@@ -3309,6 +3381,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     ordersPage = 1;
     renderOrdersTable();
   });
+  wireMultiselect('orderProvince', ORDER_PROVINCE_MULTISELECT, () => {
+    ordersPage = 1;
+    renderOrdersTable();
+  });
   el('preOrdersRefreshBtn').addEventListener('click', () => withButtonLoading(el('preOrdersRefreshBtn'), reloadPreOrdersPageData));
   ['preOrderFilterCreator', 'preOrderFilterOwner', 'preOrderFilterFrom', 'preOrderFilterTo', 'preOrderFilterDateBasis', 'preOrderFilterNotifyStatus', 'preOrderFilterResponseStatus', 'preOrderFilterAneka', 'preOrderSearchBox'].forEach((id) => {
     el(id).addEventListener('input', () => {
@@ -3376,6 +3452,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderProblemOrdersTable();
   });
   wireMultiselect('problemOrderProduct', PROBLEM_ORDER_PRODUCT_MULTISELECT, () => {
+    problemOrdersPage = 1;
+    renderProblemOrdersTable();
+  });
+  wireMultiselect('problemOrderProvince', PROBLEM_ORDER_PROVINCE_MULTISELECT, () => {
     problemOrdersPage = 1;
     renderProblemOrdersTable();
   });
@@ -3454,7 +3534,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!isApplyingLaporanQuickRange) el('laporanFilterQuickRange').value = 'custom';
     });
   });
+  wireMultiselect('laporanProvince', LAPORAN_PROVINCE_MULTISELECT, renderLaporan);
   wireMultiselect('laporanProduct', LAPORAN_PRODUCT_MULTISELECT, renderLaporan);
+  wireMultiselect('laporanCampaign', LAPORAN_CAMPAIGN_MULTISELECT, renderLaporan);
 
   el('preOrdersSelectAllCheckbox').addEventListener('change', () => {
     const checked = el('preOrdersSelectAllCheckbox').checked;
@@ -3493,6 +3575,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   ['dashFilterFrom', 'dashFilterTo', 'dashFilterOwner', 'dashFilterCreator'].forEach((id) => {
     el(id).addEventListener('input', renderDashboard);
   });
+  wireMultiselect('dashProvince', DASH_PROVINCE_MULTISELECT, renderDashboard);
   el('dashFilterDateBasis').addEventListener('change', renderDashboard);
   el('dashFilterQuickRange').addEventListener('change', applyDashQuickRange);
   // Editing Dari/Sampai by hand no longer matches whatever quick range was
