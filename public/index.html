@@ -709,6 +709,12 @@
               <div class="multiselect-panel hidden" id="orderFilterProvincePanel"></div>
             </div>
           </label>
+          <label>Filter CS
+            <div class="multiselect" id="orderFilterCsMulti">
+              <button type="button" class="multiselect-toggle" id="orderFilterCsToggle">Semua CS</button>
+              <div class="multiselect-panel hidden" id="orderFilterCsPanel"></div>
+            </div>
+          </label>
           <label>Status Bermasalah
             <select id="orderFilterProblemStatus">
               <option value="all">Semua</option>
@@ -773,6 +779,7 @@
                 <th data-col="senderRegency">Kota/Kabupaten Pengirim</th>
                 <th data-col="senderAddress">Alamat Pengirim</th>
                 <th data-col="csName">Nama CS</th>
+                <th data-col="csEmail">CS (Pra-Pesanan)</th>
                 <th data-col="returnToSellerDate">Tanggal Return Ke Seller</th>
                 <th data-col="originalShippingCost">Ongkos Kirim Asli</th>
                 <th data-col="district">Kecamatan</th>
@@ -1076,6 +1083,12 @@
               <div class="multiselect-panel hidden" id="problemOrderFilterProvincePanel"></div>
             </div>
           </label>
+          <label>Filter CS
+            <div class="multiselect" id="problemOrderFilterCsMulti">
+              <button type="button" class="multiselect-toggle" id="problemOrderFilterCsToggle">Semua CS</button>
+              <div class="multiselect-panel hidden" id="problemOrderFilterCsPanel"></div>
+            </div>
+          </label>
           <input type="search" id="problemOrderSearchBox" placeholder="Cari nama / no. HP / no. resi..." />
         </section>
 
@@ -1133,6 +1146,7 @@
                 <th data-col="senderRegency">Kota/Kabupaten Pengirim</th>
                 <th data-col="senderAddress">Alamat Pengirim</th>
                 <th data-col="csName">Nama CS</th>
+                <th data-col="csEmail">CS (Pra-Pesanan)</th>
                 <th data-col="returnToSellerDate">Tanggal Return Ke Seller</th>
                 <th data-col="originalShippingCost">Ongkos Kirim Asli</th>
                 <th data-col="district">Kecamatan</th>

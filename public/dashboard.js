@@ -1036,6 +1036,17 @@ const PROBLEM_ORDER_PROVINCE_MULTISELECT = {
   multi: 'problemOrderFilterProvinceMulti', toggle: 'problemOrderFilterProvinceToggle',
   panel: 'problemOrderFilterProvincePanel', all: 'problemOrderFilterProvinceAll', label: 'provinsi',
 };
+// Order.csName ("Nama CS" dari file impor lincah) - teks bebas, bukan email
+// User dashboard (beda dari Pra-Pesanan's Filter CS, yang pakai
+// PreOrder.createdByEmail).
+const ORDER_CS_MULTISELECT = {
+  multi: 'orderFilterCsMulti', toggle: 'orderFilterCsToggle',
+  panel: 'orderFilterCsPanel', all: 'orderFilterCsAll', label: 'CS',
+};
+const PROBLEM_ORDER_CS_MULTISELECT = {
+  multi: 'problemOrderFilterCsMulti', toggle: 'problemOrderFilterCsToggle',
+  panel: 'problemOrderFilterCsPanel', all: 'problemOrderFilterCsAll', label: 'CS',
+};
 
 function populateOrderStatusSelect(select) {
   const statuses = Array.from(new Set(allOrders.map((o) => o.status).filter(Boolean))).sort();
@@ -1071,6 +1082,13 @@ function renderOrdersTable() {
   renderMultiselectPanel('orderProduct', ORDER_PRODUCT_MULTISELECT, orderProductNames);
   const orderProvinces = Array.from(new Set(allOrders.map((o) => o.province).filter(Boolean))).sort();
   renderMultiselectPanel('orderProvince', ORDER_PROVINCE_MULTISELECT, orderProvinces);
+  // CS filter is driven by orderCreatorEmailByOrderId (the matched
+  // Pra-Pesanan's createdByEmail - see loadOrders), NOT Order.csName from the
+  // import, which in practice is just "-" (blank placeholder) on every row.
+  // An order with no matching Pra-Pesanan simply has nothing here - correctly
+  // excluded from every specific CS option, only "Semua CS" shows it.
+  const orderCsEmails = Array.from(new Set(Object.values(orderCreatorEmailByOrderId))).sort();
+  renderMultiselectPanel('orderCs', ORDER_CS_MULTISELECT, orderCsEmails);
 
   const statusFilter = el('orderFilterStatus').value;
   const ownerFilter = el('orderFilterOwner').value;
@@ -1080,6 +1098,7 @@ function renderOrdersTable() {
   const problemStatusFilter = el('orderFilterProblemStatus').value;
   const selectedProducts = getMultiselectSelection('orderProduct');
   const selectedProvinces = getMultiselectSelection('orderProvince');
+  const selectedCsEmails = getMultiselectSelection('orderCs');
   const q = el('orderSearchBox').value.trim().toLowerCase();
 
   const filtered = allOrders.filter((order) => {
@@ -1087,6 +1106,7 @@ function renderOrdersTable() {
     if (ownerFilter !== 'all' && (order.ownerNumber || '') !== ownerFilter) return false;
     if (selectedProducts.size > 0 && !selectedProducts.has(order.productName || '')) return false;
     if (selectedProvinces.size > 0 && !selectedProvinces.has(order.province || '')) return false;
+    if (selectedCsEmails.size > 0 && !selectedCsEmails.has(orderCreatorEmailByOrderId[order.id] || '')) return false;
     if (problemStatusFilter === 'problematic' && !isProblematicOrder(order)) return false;
     if (problemStatusFilter === 'normal' && isProblematicOrder(order)) return false;
     const dateToCheck = dateBasis === 'lead' ? order.leadDate : order.createdDate;
@@ -1181,6 +1201,7 @@ function renderOrdersTable() {
       <td data-col="senderRegency">${escapeHtml(order.senderRegency || '-')}</td>
       <td data-col="senderAddress">${escapeHtml(order.senderAddress || '-')}</td>
       <td data-col="csName">${escapeHtml(order.csName || '-')}</td>
+      <td data-col="csEmail">${escapeHtml(orderCreatorEmailByOrderId[order.id] || '-')}</td>
       <td data-col="returnToSellerDate">${escapeHtml(returnToSellerDateDisplay)}</td>
       <td data-col="originalShippingCost">${escapeHtml(formatRupiah(order.originalShippingCost))}</td>
       <td data-col="district">${escapeHtml(order.district || '-')}</td>
@@ -1252,11 +1273,28 @@ async function deleteSelectedOrders() {
   }
 }
 
+// Order.csName ("Nama CS" dari file impor lincah) is unreliable - in
+// practice it's often left as "-" for every row (the import's own
+// placeholder for blank, same as Problem). The one real CS attribution this
+// system actually has is PreOrder.createdByEmail, on whichever Pra-Pesanan
+// this Order graduated from (see findPreOrderMatch in server/app.js) - but
+// the relationship only exists in that direction (PreOrder.convertedOrderId
+// -> Order._id), so this reverse-indexes it by fetching every converted
+// Pra-Pesanan once per load rather than looking it up per row.
+let orderCreatorEmailByOrderId = {};
+
 async function loadOrders() {
   el('ordersLoadingState').classList.remove('hidden');
   try {
-    const { orders } = await apiGet('/api/orders');
+    const [{ orders }, { preOrders: convertedPreOrders }] = await Promise.all([
+      apiGet('/api/orders'),
+      apiGet('/api/preorders?status=converted'),
+    ]);
     allOrders = orders;
+    orderCreatorEmailByOrderId = {};
+    convertedPreOrders.forEach((p) => {
+      if (p.convertedOrderId && p.createdByEmail) orderCreatorEmailByOrderId[p.convertedOrderId] = p.createdByEmail;
+    });
     renderOrdersTable();
     // Same allOrders, always kept in sync too - whichever of the two pages
     // (Pesanan / Pesanan Bermasalah) isn't currently visible just re-renders
@@ -1283,6 +1321,12 @@ function renderProblemOrdersTable() {
   renderMultiselectPanel('problemOrderProduct', PROBLEM_ORDER_PRODUCT_MULTISELECT, productNames);
   const provinces = Array.from(new Set(problemOrders.map((o) => o.province).filter(Boolean))).sort();
   renderMultiselectPanel('problemOrderProvince', PROBLEM_ORDER_PROVINCE_MULTISELECT, provinces);
+  // See the same "matched Pra-Pesanan's creator, not Order.csName" reasoning
+  // on renderOrdersTable's own orderCsEmails above.
+  const problemOrderCsEmails = Array.from(new Set(
+    problemOrders.map((o) => orderCreatorEmailByOrderId[o.id]).filter(Boolean)
+  )).sort();
+  renderMultiselectPanel('problemOrderCs', PROBLEM_ORDER_CS_MULTISELECT, problemOrderCsEmails);
 
   const statusFilter = el('problemOrderFilterStatus').value;
   const ownerFilter = el('problemOrderFilterOwner').value;
@@ -1291,6 +1335,7 @@ function renderProblemOrdersTable() {
   const dateBasis = el('problemOrderFilterDateBasis').value;
   const selectedProducts = getMultiselectSelection('problemOrderProduct');
   const selectedProvinces = getMultiselectSelection('problemOrderProvince');
+  const selectedCsEmails = getMultiselectSelection('problemOrderCs');
   const q = el('problemOrderSearchBox').value.trim().toLowerCase();
 
   const filtered = problemOrders.filter((order) => {
@@ -1298,6 +1343,7 @@ function renderProblemOrdersTable() {
     if (ownerFilter !== 'all' && (order.ownerNumber || '') !== ownerFilter) return false;
     if (selectedProducts.size > 0 && !selectedProducts.has(order.productName || '')) return false;
     if (selectedProvinces.size > 0 && !selectedProvinces.has(order.province || '')) return false;
+    if (selectedCsEmails.size > 0 && !selectedCsEmails.has(orderCreatorEmailByOrderId[order.id] || '')) return false;
     const dateToCheck = dateBasis === 'lead' ? order.leadDate : order.createdDate;
     if (!withinDateRange(dateToCheck, from, to)) return false;
     if (q) {
@@ -1390,6 +1436,7 @@ function renderProblemOrdersTable() {
       <td data-col="senderRegency">${escapeHtml(order.senderRegency || '-')}</td>
       <td data-col="senderAddress">${escapeHtml(order.senderAddress || '-')}</td>
       <td data-col="csName">${escapeHtml(order.csName || '-')}</td>
+      <td data-col="csEmail">${escapeHtml(orderCreatorEmailByOrderId[order.id] || '-')}</td>
       <td data-col="returnToSellerDate">${escapeHtml(returnToSellerDateDisplay)}</td>
       <td data-col="originalShippingCost">${escapeHtml(formatRupiah(order.originalShippingCost))}</td>
       <td data-col="district">${escapeHtml(order.district || '-')}</td>
@@ -3385,6 +3432,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     ordersPage = 1;
     renderOrdersTable();
   });
+  wireMultiselect('orderCs', ORDER_CS_MULTISELECT, () => {
+    ordersPage = 1;
+    renderOrdersTable();
+  });
   el('preOrdersRefreshBtn').addEventListener('click', () => withButtonLoading(el('preOrdersRefreshBtn'), reloadPreOrdersPageData));
   ['preOrderFilterCreator', 'preOrderFilterOwner', 'preOrderFilterFrom', 'preOrderFilterTo', 'preOrderFilterDateBasis', 'preOrderFilterNotifyStatus', 'preOrderFilterResponseStatus', 'preOrderFilterAneka', 'preOrderSearchBox'].forEach((id) => {
     el(id).addEventListener('input', () => {
@@ -3456,6 +3507,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderProblemOrdersTable();
   });
   wireMultiselect('problemOrderProvince', PROBLEM_ORDER_PROVINCE_MULTISELECT, () => {
+    problemOrdersPage = 1;
+    renderProblemOrdersTable();
+  });
+  wireMultiselect('problemOrderCs', PROBLEM_ORDER_CS_MULTISELECT, () => {
     problemOrdersPage = 1;
     renderProblemOrdersTable();
   });
