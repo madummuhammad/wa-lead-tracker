@@ -1913,10 +1913,15 @@ function createApp() {
       // PreOrder at all - a campaign has no equivalent concept there.
       const campaignIds = (Array.isArray(req.query.campaignId) ? req.query.campaignId : req.query.campaignId ? [req.query.campaignId] : [])
         .filter((c) => c && c !== 'all');
-      // createdByEmail (CS) is accepted for filter-bar consistency with
-      // Dashboard, but - same as there - Order has no CS/creator field, so
-      // it can't narrow Total Omset; and AdSpend has no CS concept either.
-      // Neither card in this report can honor it.
+      // createdByEmail (CS) - AdSpend has no CS concept, so it still never
+      // narrows Total Biaya Iklan. Order-based cards now can honor it though
+      // (see csForOrder below): Order.csName from the import is unreliable
+      // (often just "-", the import's own blank placeholder) so this is
+      // derived from whichever Pra-Pesanan this Order graduated from
+      // (PreOrder.createdByEmail, matched via convertedOrderId) when there is
+      // one, falling back to a manually-typed Order.csName otherwise - same
+      // dual-source logic as the Pesanan page's own CS filter/column.
+      const createdByEmail = req.query.createdByEmail && req.query.createdByEmail !== 'all' ? req.query.createdByEmail : null;
 
       const fromTime = from ? new Date(`${from}T00:00:00`).getTime() : null;
       const toTime = to ? new Date(`${to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000 - 1 : null;
@@ -1944,10 +1949,24 @@ function createApp() {
       const orderDateForFilter = (o) =>
         dateBasis === 'lead' ? chatByPhone.get(o.customerPhone)?.firstMessageDate : o.createdDate;
 
+      // See the createdByEmail comment above - reverse-indexes
+      // PreOrder.convertedOrderId -> createdByEmail once, rather than
+      // scanning all preOrders per order.
+      const orderCreatorEmailByOrderId = {};
+      preOrders.forEach((p) => {
+        if (p.convertedOrderId && p.createdByEmail) orderCreatorEmailByOrderId[p.convertedOrderId] = p.createdByEmail;
+      });
+      function csForOrder(o) {
+        const derived = orderCreatorEmailByOrderId[o._id];
+        if (derived) return derived;
+        return o.csName && o.csName !== '-' ? o.csName : '';
+      }
+
       const filteredOrders = orders.filter((o) =>
         (!ownerNumber || (o.ownerNumber || '') === ownerNumber) &&
         (productNames.length === 0 || productNames.includes(o.productName || '')) &&
         (provinces.length === 0 || provinces.includes(o.province || '')) &&
+        (!createdByEmail || csForOrder(o) === createdByEmail) &&
         withinDateFilter(orderDateForFilter(o))
       );
       // Same formula as the Dashboard/Pesanan Omset cards - Nilai COD minus
@@ -1961,6 +1980,15 @@ function createApp() {
       const totalHpp = filteredOrders
         .filter((o) => o.status !== 'Dibatalkan')
         .reduce((sum, o) => sum + (o.hpp || 0) * (o.qty || 1), 0);
+
+      // Bonus (CS) - 2% of Harga Produk x Qty, same scope as Total Omset/HPP
+      // (every non-cancelled order - a cancelled order was never actually
+      // sold, so nothing to pay a bonus on). Filterable by CS via
+      // createdByEmail like every other card here (see csForOrder above).
+      const BONUS_RATE = 0.02;
+      const totalBonus = filteredOrders
+        .filter((o) => o.status !== 'Dibatalkan')
+        .reduce((sum, o) => sum + (o.price || 0) * (o.qty || 1) * BONUS_RATE, 0);
 
       // AdSpend has no ownerNumber of its own - only date and product (via
       // the campaign->product mapping already stamped onto each row) apply.
@@ -2167,7 +2195,13 @@ function createApp() {
           ...orders.map((o) => o.productName),
           ...preOrders.map((p) => p.productName),
         ].filter(Boolean))).sort(),
-        creators: Array.from(new Set(preOrders.map((p) => p.createdByEmail).filter(Boolean))).sort(),
+        // Merged from both sources csForOrder reads (see above) - a CS who
+        // only ever entered orders directly (manual Nama CS, no Pra-Pesanan)
+        // would otherwise never appear as a filterable option.
+        creators: Array.from(new Set([
+          ...preOrders.map((p) => p.createdByEmail),
+          ...orders.map(csForOrder),
+        ].filter(Boolean))).sort(),
         provinces: Array.from(new Set(orders.map((o) => o.province).filter(Boolean))).sort(),
         // Distinct campaigns for the Total Biaya Iklan multiselect - from the
         // *unfiltered* adSpends (same "dropdown never shrinks" rule as every
@@ -2184,7 +2218,7 @@ function createApp() {
       };
 
       res.json({
-        cards: { totalOmset, totalHpp, totalBiayaIklan, totalProfit, realizedProfit },
+        cards: { totalOmset, totalHpp, totalBiayaIklan, totalProfit, realizedProfit, totalBonus },
         returnRateByProvince,
         productBreakdown,
         filterOptions,

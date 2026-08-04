@@ -1082,12 +1082,13 @@ function renderOrdersTable() {
   renderMultiselectPanel('orderProduct', ORDER_PRODUCT_MULTISELECT, orderProductNames);
   const orderProvinces = Array.from(new Set(allOrders.map((o) => o.province).filter(Boolean))).sort();
   renderMultiselectPanel('orderProvince', ORDER_PROVINCE_MULTISELECT, orderProvinces);
-  // CS filter is driven by orderCreatorEmailByOrderId (the matched
-  // Pra-Pesanan's createdByEmail - see loadOrders), NOT Order.csName from the
-  // import, which in practice is just "-" (blank placeholder) on every row.
-  // An order with no matching Pra-Pesanan simply has nothing here - correctly
-  // excluded from every specific CS option, only "Semua CS" shows it.
-  const orderCsEmails = Array.from(new Set(Object.values(orderCreatorEmailByOrderId))).sort();
+  // CS filter is driven by csForOrder (matched Pra-Pesanan's createdByEmail,
+  // falling back to a manually-typed Nama CS - see csForOrder above), not
+  // the raw Order.csName from the import alone, which in practice is just
+  // "-" (blank placeholder) on every row. An order with neither simply has
+  // nothing here - correctly excluded from every specific CS option, only
+  // "Semua CS" shows it.
+  const orderCsEmails = Array.from(new Set(allOrders.map(csForOrder).filter(Boolean))).sort();
   renderMultiselectPanel('orderCs', ORDER_CS_MULTISELECT, orderCsEmails);
 
   const statusFilter = el('orderFilterStatus').value;
@@ -1106,7 +1107,7 @@ function renderOrdersTable() {
     if (ownerFilter !== 'all' && (order.ownerNumber || '') !== ownerFilter) return false;
     if (selectedProducts.size > 0 && !selectedProducts.has(order.productName || '')) return false;
     if (selectedProvinces.size > 0 && !selectedProvinces.has(order.province || '')) return false;
-    if (selectedCsEmails.size > 0 && !selectedCsEmails.has(orderCreatorEmailByOrderId[order.id] || '')) return false;
+    if (selectedCsEmails.size > 0 && !selectedCsEmails.has(csForOrder(order))) return false;
     if (problemStatusFilter === 'problematic' && !isProblematicOrder(order)) return false;
     if (problemStatusFilter === 'normal' && isProblematicOrder(order)) return false;
     const dateToCheck = dateBasis === 'lead' ? order.leadDate : order.createdDate;
@@ -1201,7 +1202,7 @@ function renderOrdersTable() {
       <td data-col="senderRegency">${escapeHtml(order.senderRegency || '-')}</td>
       <td data-col="senderAddress">${escapeHtml(order.senderAddress || '-')}</td>
       <td data-col="csName">${escapeHtml(order.csName || '-')}</td>
-      <td data-col="csEmail">${escapeHtml(orderCreatorEmailByOrderId[order.id] || '-')}</td>
+      <td data-col="csEmail">${escapeHtml(csForOrder(order) || '-')}</td>
       <td data-col="returnToSellerDate">${escapeHtml(returnToSellerDateDisplay)}</td>
       <td data-col="originalShippingCost">${escapeHtml(formatRupiah(order.originalShippingCost))}</td>
       <td data-col="district">${escapeHtml(order.district || '-')}</td>
@@ -1283,6 +1284,19 @@ async function deleteSelectedOrders() {
 // Pra-Pesanan once per load rather than looking it up per row.
 let orderCreatorEmailByOrderId = {};
 
+// The CS filter/column's actual value: the matched Pra-Pesanan's creator
+// when there is one (authoritative, automatic - see loadOrders), otherwise
+// whatever was typed by hand into this order's own "Nama CS" field (Edit
+// Pesanan modal → csName, see startEditOrder/saveOrder) - the only way to
+// attribute a CS to an order that was never tracked as a Pra-Pesanan first.
+// "-" is the import's own placeholder for blank (same convention as
+// Problem), never treated as a real value here.
+function csForOrder(order) {
+  const derived = orderCreatorEmailByOrderId[order.id];
+  if (derived) return derived;
+  return order.csName && order.csName !== '-' ? order.csName : '';
+}
+
 async function loadOrders() {
   el('ordersLoadingState').classList.remove('hidden');
   try {
@@ -1321,11 +1335,9 @@ function renderProblemOrdersTable() {
   renderMultiselectPanel('problemOrderProduct', PROBLEM_ORDER_PRODUCT_MULTISELECT, productNames);
   const provinces = Array.from(new Set(problemOrders.map((o) => o.province).filter(Boolean))).sort();
   renderMultiselectPanel('problemOrderProvince', PROBLEM_ORDER_PROVINCE_MULTISELECT, provinces);
-  // See the same "matched Pra-Pesanan's creator, not Order.csName" reasoning
-  // on renderOrdersTable's own orderCsEmails above.
-  const problemOrderCsEmails = Array.from(new Set(
-    problemOrders.map((o) => orderCreatorEmailByOrderId[o.id]).filter(Boolean)
-  )).sort();
+  // See csForOrder above - matched Pra-Pesanan's creator, falling back to a
+  // manually-typed Nama CS.
+  const problemOrderCsEmails = Array.from(new Set(problemOrders.map(csForOrder).filter(Boolean))).sort();
   renderMultiselectPanel('problemOrderCs', PROBLEM_ORDER_CS_MULTISELECT, problemOrderCsEmails);
 
   const statusFilter = el('problemOrderFilterStatus').value;
@@ -1343,7 +1355,7 @@ function renderProblemOrdersTable() {
     if (ownerFilter !== 'all' && (order.ownerNumber || '') !== ownerFilter) return false;
     if (selectedProducts.size > 0 && !selectedProducts.has(order.productName || '')) return false;
     if (selectedProvinces.size > 0 && !selectedProvinces.has(order.province || '')) return false;
-    if (selectedCsEmails.size > 0 && !selectedCsEmails.has(orderCreatorEmailByOrderId[order.id] || '')) return false;
+    if (selectedCsEmails.size > 0 && !selectedCsEmails.has(csForOrder(order))) return false;
     const dateToCheck = dateBasis === 'lead' ? order.leadDate : order.createdDate;
     if (!withinDateRange(dateToCheck, from, to)) return false;
     if (q) {
@@ -1436,7 +1448,7 @@ function renderProblemOrdersTable() {
       <td data-col="senderRegency">${escapeHtml(order.senderRegency || '-')}</td>
       <td data-col="senderAddress">${escapeHtml(order.senderAddress || '-')}</td>
       <td data-col="csName">${escapeHtml(order.csName || '-')}</td>
-      <td data-col="csEmail">${escapeHtml(orderCreatorEmailByOrderId[order.id] || '-')}</td>
+      <td data-col="csEmail">${escapeHtml(csForOrder(order) || '-')}</td>
       <td data-col="returnToSellerDate">${escapeHtml(returnToSellerDateDisplay)}</td>
       <td data-col="originalShippingCost">${escapeHtml(formatRupiah(order.originalShippingCost))}</td>
       <td data-col="district">${escapeHtml(order.district || '-')}</td>
@@ -3001,6 +3013,7 @@ function renderLaporanCards(cards) {
   el('statLaporanTotalHpp').textContent = formatRupiah(cards.totalHpp);
   el('statLaporanTotalProfit').textContent = formatSignedRupiah(cards.totalProfit);
   el('statLaporanRealizedProfit').textContent = formatSignedRupiah(cards.realizedProfit);
+  el('statLaporanTotalBonus').textContent = formatRupiah(cards.totalBonus);
 }
 
 // "Tampilkan" row-limit picker for the ranked table - same localStorage key
