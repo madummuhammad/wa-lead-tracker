@@ -1056,6 +1056,18 @@ function populateOrderStatusSelect(select) {
   select.value = statuses.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
 }
 
+// Options come from `problemOrders` (already-problematic orders only), not
+// allOrders - "Status Terakhir (Kurir)" is only ever populated for orders
+// that went through the Problem Tracking import in the first place (see the
+// Order model comment), so anything outside that set has nothing useful here.
+function populateProblemStatusTerakhirSelect(select, problemOrders) {
+  const statuses = Array.from(new Set(problemOrders.map((o) => o.problemStatusTerakhir).filter(Boolean))).sort();
+  const previousValue = select.value || 'all';
+  select.innerHTML = '<option value="all">Semua Status Terakhir</option>' +
+    statuses.map((s) => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+  select.value = statuses.includes(previousValue) || previousValue === 'all' ? previousValue : 'all';
+}
+
 function populateOrderOwnerSelect(select) {
   const owners = Array.from(new Set(allOrders.map((o) => o.ownerNumber).filter(Boolean))).sort();
   const previousValue = select.value || 'all';
@@ -1339,6 +1351,7 @@ function renderProblemOrdersTable() {
   // manually-typed Nama CS.
   const problemOrderCsEmails = Array.from(new Set(problemOrders.map(csForOrder).filter(Boolean))).sort();
   renderMultiselectPanel('problemOrderCs', PROBLEM_ORDER_CS_MULTISELECT, problemOrderCsEmails);
+  populateProblemStatusTerakhirSelect(el('problemOrderFilterStatusTerakhir'), problemOrders);
 
   const statusFilter = el('problemOrderFilterStatus').value;
   const ownerFilter = el('problemOrderFilterOwner').value;
@@ -1348,6 +1361,7 @@ function renderProblemOrdersTable() {
   const selectedProducts = getMultiselectSelection('problemOrderProduct');
   const selectedProvinces = getMultiselectSelection('problemOrderProvince');
   const selectedCsEmails = getMultiselectSelection('problemOrderCs');
+  const statusTerakhirFilter = el('problemOrderFilterStatusTerakhir').value;
   const q = el('problemOrderSearchBox').value.trim().toLowerCase();
 
   const filtered = problemOrders.filter((order) => {
@@ -1356,6 +1370,7 @@ function renderProblemOrdersTable() {
     if (selectedProducts.size > 0 && !selectedProducts.has(order.productName || '')) return false;
     if (selectedProvinces.size > 0 && !selectedProvinces.has(order.province || '')) return false;
     if (selectedCsEmails.size > 0 && !selectedCsEmails.has(csForOrder(order))) return false;
+    if (statusTerakhirFilter !== 'all' && (order.problemStatusTerakhir || '') !== statusTerakhirFilter) return false;
     const dateToCheck = dateBasis === 'lead' ? order.leadDate : order.createdDate;
     if (!withinDateRange(dateToCheck, from, to)) return false;
     if (q) {
@@ -3505,7 +3520,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // page/pageSize/selection state, but orderSaveBtn/orderCancelEditBtn/
   // orderFormCloseBtn above already cover the shared edit modal for both. ----
   el('problemOrdersRefreshBtn').addEventListener('click', () => withButtonLoading(el('problemOrdersRefreshBtn'), loadOrders));
-  ['problemOrderFilterStatus', 'problemOrderFilterOwner', 'problemOrderFilterFrom', 'problemOrderFilterTo', 'problemOrderSearchBox'].forEach((id) => {
+  ['problemOrderFilterStatus', 'problemOrderFilterOwner', 'problemOrderFilterFrom', 'problemOrderFilterTo', 'problemOrderSearchBox', 'problemOrderFilterStatusTerakhir'].forEach((id) => {
     el(id).addEventListener('input', () => {
       problemOrdersPage = 1;
       renderProblemOrdersTable();
