@@ -308,6 +308,36 @@ body {
   font-size: 13px;
   font-family: inherit;
 }
+/* Checkbox + label filters ("Termasuk Pra-Pesanan" on Dashboard) - row
+   layout instead of .filters label's default column stack, which is meant
+   for a text-above-input pair, not a checkbox sitting next to its own text. */
+.filter-toggle-label {
+  display: flex;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 6px !important;
+  font-size: 13px !important;
+  color: var(--ink) !important;
+  font-weight: 500;
+  cursor: pointer;
+  padding-bottom: 7px;
+}
+.filter-toggle-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+/* "Kurangi Ongkir/Biaya COD/HPP" toggles above ROAS & Biaya per Order per
+   Produk (Dashboard) - reuses .filter-toggle-label but outside .filters, so
+   laid out in its own row here instead. */
+.roas-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 4px 0 10px;
+}
+
 .filter-single, .filter-range {
   display: none;
   gap: 10px;
@@ -425,6 +455,7 @@ body {
 .stat-aov .stat-icon { background: #fdeecb; color: #946200; }
 .stat-cancel .stat-icon { background: var(--danger-tint); color: var(--danger); }
 .stat-preorder .stat-icon { background: #e8f0fe; color: #2e6fdb; }
+.stat-ads .stat-icon { background: #f3e8ff; color: #8b3fd1; }
 .stat-ongkir .stat-icon { background: #fdeecb; color: #946200; }
 .stat-codfee .stat-icon { background: var(--danger-tint); color: var(--danger); }
 .stat-profit .stat-icon { background: var(--brand-tint); color: var(--brand); }
@@ -566,6 +597,12 @@ th.sortable-col {
 }
 th.sortable-col:hover { color: var(--ink); background: #f0f2f3; }
 th.sortable-col .sort-arrow { margin-left: 4px; color: var(--ink-faint); }
+
+/* Dashboard's Ranking Kampanye table - campaigns with real spend but 0
+   Hasil (see campaignRanking's wastedSpend in server/app.js), the clearest
+   "matikan kampanye ini" signal there is. */
+.row-wasted td { background: var(--danger-tint); }
+.text-danger { color: var(--danger); font-weight: 600; }
 
 /* Small "N pesanan" line under a money figure (see moneyWithCount in
    dashboard.js, used by Laporan's "Performa per Produk" table) - context for

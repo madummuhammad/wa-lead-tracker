@@ -2007,6 +2007,13 @@ function createApp() {
       );
       const totalBiayaIklan = filteredAdSpends.reduce((sum, a) => sum + (a.spend || 0), 0);
 
+      // Modal (yang telah dikeluarkan) = Total HPP + Total Biaya Iklan - both
+      // are money that's already left the business regardless of whether
+      // the sale itself has paid off yet (HPP is the cost of goods for every
+      // non-cancelled order; Biaya Iklan is ad spend already billed) -
+      // distinct from Total HPP alone, which only covers the product cost.
+      const totalModal = totalHpp + totalBiayaIklan;
+
       // Profit = Omset - HPP - Biaya Iklan, but NOT a naive
       // totalOmset - totalHpp - totalBiayaIklan - that would overstate
       // Return orders, whose Nilai COD totalOmset still counts even though
@@ -2218,7 +2225,7 @@ function createApp() {
       };
 
       res.json({
-        cards: { totalOmset, totalHpp, totalBiayaIklan, totalProfit, realizedProfit, totalBonus },
+        cards: { totalOmset, totalHpp, totalBiayaIklan, totalModal, totalProfit, realizedProfit, totalBonus },
         returnRateByProvince,
         productBreakdown,
         filterOptions,
@@ -2252,6 +2259,29 @@ function createApp() {
       // has no separate "order date" to toggle, so chatMasuk/closingRate
       // below always stay on firstMessageDate regardless of this setting.
       const dateBasis = req.query.dateBasis === 'lead' ? 'lead' : 'order';
+      // Toggle: "Termasuk Pra-Pesanan (belum jadi Pesanan)" - off by default,
+      // matching every other number on this page (Order-only, confirmed
+      // data). When on, active (not yet convertedOrderId) Pra-Pesanan whose
+      // responseStatus isn't 'dibatalkan' are added into Total Pesanan/Omset/
+      // rata-rata, and into Omset per Produk + ROAS/CPA per Produk - so
+      // iklan/produk performance can be read either "confirmed only" or
+      // "confirmed + pipeline" without the two ever being silently mixed.
+      // Deliberately narrow: never touches Profit/HPP/Ongkir/Biaya COD or
+      // anything status-based, since a Pra-Pesanan has no shipping cost,
+      // reconciliation, or HPP-actually-incurred yet to make those accurate.
+      const includePreOrders = req.query.includePreOrders === 'true';
+      // "ROAS & Biaya per Order per Produk" table only - its own Omset
+      // definition, independently toggleable from everything else on this
+      // page (Total Omset card, Omset per Produk chart, etc always keep the
+      // standard Nilai COD - Ongkir - Biaya COD formula, see orderRealPrice
+      // below). Ongkir/Biaya COD default to subtracted (true) to match that
+      // standard formula out of the box; HPP defaults to NOT subtracted
+      // (false) since plain Omset never included it anywhere else either -
+      // turning it on turns this table's "Omset" into more of a margin
+      // figure, which is exactly the point of offering the toggle.
+      const roasIncludeHpp = req.query.roasIncludeHpp === 'true';
+      const roasIncludeOngkir = req.query.roasIncludeOngkir !== 'false';
+      const roasIncludeCodFee = req.query.roasIncludeCodFee !== 'false';
 
       const fromTime = from ? new Date(`${from}T00:00:00`).getTime() : null;
       const toTime = to ? new Date(`${to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000 - 1 : null;
@@ -2264,11 +2294,13 @@ function createApp() {
         return true;
       };
 
-      const [chats, orders, preOrders, settingsDoc] = await Promise.all([
+      const [chats, orders, preOrders, settingsDoc, products, adSpends] = await Promise.all([
         Chat.find({}).lean(),
         Order.find({}).lean(),
         PreOrder.find({}).lean(), // includes converted ones - needed for the funnel/CS history
         Settings.findById('singleton').lean(),
+        Product.find({}).lean(),
+        AdSpend.find({}).lean(),
       ]);
       const chatByPhone = new Map(chats.map((c) => [c._id, c]));
       const orderDateForFilter = (o) => (dateBasis === 'lead' ? leadDateForPhone(o.customerPhone, chatByPhone) : o.createdDate);
@@ -2312,10 +2344,26 @@ function createApp() {
       const nonCancelledOrders = filteredOrders.filter((o) => o.status !== 'Dibatalkan');
       const cancelledCount = filteredOrders.filter((o) => o.status === 'Dibatalkan').length;
       const deliveredCount = filteredOrders.filter((o) => o.status === 'Diterima').length;
-      const totalOmset = nonCancelledOrders.reduce((sum, o) => sum + orderRealPrice(o), 0);
       const totalOngkir = nonCancelledOrders.reduce((sum, o) => sum + (o.shippingCost || 0), 0);
       const totalBiayaCod = nonCancelledOrders.reduce((sum, o) => sum + (o.codFee || 0), 0);
-      const totalPesanan = filteredOrders.length;
+
+      // See the includePreOrders comment above - active (not yet converted)
+      // Pra-Pesanan the customer hasn't actually cancelled, counted as
+      // pipeline on top of confirmed Orders when the toggle is on. Total
+      // Harga (Qty x Harga Satuan, no ongkir) is used for "omset" here to
+      // match orderRealPrice above, which also excludes shipping.
+      const pipelinePreOrders = includePreOrders
+        ? filteredPreOrders.filter((p) => !p.convertedOrderId && p.responseStatus !== 'dibatalkan')
+        : [];
+      const pipelinePreOrderOmset = pipelinePreOrders.reduce((sum, p) => sum + (p.totalPrice || 0), 0);
+
+      const totalOmset = nonCancelledOrders.reduce((sum, o) => sum + orderRealPrice(o), 0) + pipelinePreOrderOmset;
+      // Order-only count, kept separate from the (possibly pipeline-
+      // inflated) totalPesanan card below - cancellationRate must stay a
+      // rate over confirmed Orders only, or adding never-cancelled pipeline
+      // Pra-Pesanan into the denominator would understate it.
+      const orderCount = filteredOrders.length;
+      const totalPesanan = orderCount + pipelinePreOrders.length;
 
       // ---- Paket bermasalah (Order.problem - catatan kendala dari kurir,
       // mis. "NOBODY AT HOME", "CONSIGNEE REFUSE TO PAY COD", diisi lewat
@@ -2417,8 +2465,12 @@ function createApp() {
       const realizedProfit = findBucket('Diterima');
       const projectedProfit = grossProfit - realizedProfit;
 
-      const avgOrderValue = nonCancelledOrders.length > 0 ? Math.round(totalOmset / nonCancelledOrders.length) : 0;
-      const cancellationRate = totalPesanan > 0 ? Math.round((cancelledCount / totalPesanan) * 1000) / 10 : 0;
+      const avgOrderValue = (nonCancelledOrders.length + pipelinePreOrders.length) > 0
+        ? Math.round(totalOmset / (nonCancelledOrders.length + pipelinePreOrders.length))
+        : 0;
+      // Order-only, deliberately not totalPesanan - see the comment on
+      // orderCount above.
+      const cancellationRate = orderCount > 0 ? Math.round((cancelledCount / orderCount) * 1000) / 10 : 0;
 
       const activePreOrders = filteredPreOrders.filter((p) => !p.convertedOrderId).length;
 
@@ -2454,7 +2506,146 @@ function createApp() {
         entry.qty += o.qty || 1;
         productMap.set(name, entry);
       });
+      // See the includePreOrders comment above - adds pipeline Pra-Pesanan
+      // into the same per-product Omset/qty bucket as confirmed Orders, so
+      // "Omset per Produk" and ROAS/CPA per Produk below read confirmed-only
+      // or confirmed+pipeline consistently with Total Omset, never a mix.
+      pipelinePreOrders.forEach((p) => {
+        const name = p.productName || '(Tanpa Nama)';
+        const entry = productMap.get(name) || { productName: name, omset: 0, qty: 0 };
+        entry.omset += p.totalPrice || 0;
+        entry.qty += p.qty || 1;
+        productMap.set(name, entry);
+      });
       const ordersByProduct = Array.from(productMap.values()).sort((a, b) => b.omset - a.omset);
+
+      // ---- Ads (performa iklan) - AdSpend has no ownerNumber/CS concept of
+      // its own, so only date and product apply, same limitation as
+      // Laporan's own ad numbers (see the comment on filteredAdSpends
+      // there). Always filtered by its own a.date regardless of dateBasis -
+      // a campaign-level daily spend row isn't tied to any single lead/order.
+      const productIdsByName = new Set(
+        productNames.length > 0
+          ? products.filter((p) => productNames.includes(p.name)).map((p) => String(p._id))
+          : []
+      );
+      const filteredAdSpends = adSpends.filter((a) =>
+        (productNames.length === 0 || (a.productId && productIdsByName.has(String(a.productId)))) &&
+        withinDateFilter(a.date)
+      );
+      const totalBiayaIklan = filteredAdSpends.reduce((sum, a) => sum + (a.spend || 0), 0);
+
+      // ---- Biaya Iklan per hari - disandingkan dengan Omset per Hari
+      // (revenueByDay) di frontend, supaya korelasi spend-vs-omset kelihatan
+      // langsung (mis. spend naik tapi omset flat = ada yang salah).
+      const adSpendByDayMap = new Map();
+      filteredAdSpends.forEach((a) => {
+        if (!a.date) return;
+        const day = new Date(a.date).toISOString().slice(0, 10);
+        adSpendByDayMap.set(day, (adSpendByDayMap.get(day) || 0) + (a.spend || 0));
+      });
+      const adSpendByDay = Array.from(adSpendByDayMap.entries())
+        .map(([date, spend]) => ({ date, spend }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      // ---- ROAS & CPA per produk - own Omset per product (roasProductMap
+      // below, NOT productMap - see roasIncludeHpp/Ongkir/CodFee above for
+      // why they need to differ) joined with Biaya Iklan per produk (via
+      // AdSpend.productId -> Product.name, same mapping Laporan's own Biaya
+      // Iklan-per-product breakdown uses). roas/cpa are null (not 0) when
+      // there's no spend/no orders to divide by - a 0 would misleadingly
+      // read as "this cost nothing"/"zero return" instead of "not enough
+      // data yet".
+      const roasOrderRevenue = (o) => {
+        let value = o.codValue || 0;
+        if (roasIncludeOngkir) value -= (o.shippingCost || 0);
+        if (roasIncludeCodFee) value -= (o.codFee || 0);
+        if (roasIncludeHpp) value -= (o.hpp || 0) * (o.qty || 1);
+        return value;
+      };
+      // PreOrder has no Biaya COD equivalent field at all - roasIncludeCodFee
+      // simply has nothing to subtract here, same as includePreOrders'
+      // pipelinePreOrderOmset above never modeling it either.
+      const roasPreOrderRevenue = (p) => {
+        let value = p.totalPrice || 0;
+        if (roasIncludeOngkir) value -= (p.shippingCost || 0);
+        if (roasIncludeHpp) value -= (p.hpp || 0) * (p.qty || 1);
+        return value;
+      };
+      const roasProductMap = new Map();
+      nonCancelledOrders.forEach((o) => {
+        const name = o.productName || '(Tanpa Nama)';
+        roasProductMap.set(name, (roasProductMap.get(name) || 0) + roasOrderRevenue(o));
+      });
+      pipelinePreOrders.forEach((p) => {
+        const name = p.productName || '(Tanpa Nama)';
+        roasProductMap.set(name, (roasProductMap.get(name) || 0) + roasPreOrderRevenue(p));
+      });
+
+      const productNameById = new Map(products.map((p) => [String(p._id), p.name]));
+      const adSpendByProductMap = new Map();
+      filteredAdSpends.forEach((a) => {
+        const name = (a.productId && productNameById.get(String(a.productId))) || '(Tanpa Produk)';
+        adSpendByProductMap.set(name, (adSpendByProductMap.get(name) || 0) + (a.spend || 0));
+      });
+      const orderCountByProduct = new Map();
+      nonCancelledOrders.forEach((o) => {
+        const name = o.productName || '(Tanpa Nama)';
+        orderCountByProduct.set(name, (orderCountByProduct.get(name) || 0) + 1);
+      });
+      pipelinePreOrders.forEach((p) => {
+        const name = p.productName || '(Tanpa Nama)';
+        orderCountByProduct.set(name, (orderCountByProduct.get(name) || 0) + 1);
+      });
+      const roasProductNames = new Set([...roasProductMap.keys(), ...adSpendByProductMap.keys()]);
+      const roasByProduct = Array.from(roasProductNames)
+        .map((name) => {
+          const omset = roasProductMap.get(name) || 0;
+          const biayaIklan = adSpendByProductMap.get(name) || 0;
+          const orderCount = orderCountByProduct.get(name) || 0;
+          return {
+            productName: name,
+            omset,
+            biayaIklan,
+            orderCount,
+            roas: biayaIklan > 0 ? Math.round((omset / biayaIklan) * 100) / 100 : null,
+            cpa: orderCount > 0 ? Math.round(biayaIklan / orderCount) : null,
+          };
+        })
+        .sort((a, b) => b.biayaIklan - a.biayaIklan);
+
+      // ---- Ranking kampanye - by their own Meta-native efficiency (Biaya
+      // per Hasil), NOT ROAS: an Order only ever links to a Product, never
+      // to the specific campaign that brought it in, and several campaigns
+      // can share one Product mapping - so true per-campaign revenue
+      // attribution isn't something this data model can answer, only
+      // per-product (see roasByProduct above). "Hasil" itself can mix result
+      // types across campaigns (Percakapan vs Klik Tautan, etc - see Iklan
+      // page) - kept as-is here too, not normalized.
+      const campaignMap = new Map();
+      filteredAdSpends.forEach((a) => {
+        if (!a.campaignId) return;
+        const entry = campaignMap.get(a.campaignId) || {
+          campaignId: a.campaignId, campaignName: a.campaignName, spend: 0, results: 0,
+        };
+        entry.spend += a.spend || 0;
+        entry.results += a.results || 0;
+        campaignMap.set(a.campaignId, entry);
+      });
+      const campaignRanking = Array.from(campaignMap.values())
+        .map((c) => ({
+          ...c,
+          costPerResult: c.results > 0 ? Math.round(c.spend / c.results) : null,
+          // Real money spent, zero results - the clearest "matikan kampanye
+          // ini" signal there is, distinct from merely "less efficient".
+          wastedSpend: c.spend > 0 && c.results === 0,
+        }))
+        .sort((a, b) => {
+          if (a.wastedSpend !== b.wastedSpend) return a.wastedSpend ? 1 : -1;
+          if (a.costPerResult === null) return 1;
+          if (b.costPerResult === null) return -1;
+          return a.costPerResult - b.costPerResult;
+        });
 
       // ---- Pre-orders by CS (bar chart) - all of them, active+converted,
       // since this is about CS productivity, not just what's still pending ----
@@ -2553,13 +2744,16 @@ function createApp() {
           totalPesanan, avgOrderValue, cancellationRate,
           activePreOrders, chatMasuk, closingCount, closingRate,
           problematicOrderCount, problematicOrderOmset, problematicOrderPotensiRTS,
-          ongkirDihemat, ongkirReturnInvoice,
+          ongkirDihemat, ongkirReturnInvoice, totalBiayaIklan,
         },
         omsetByStatus,
         profitByStatus,
         revenueByDay,
         chatsByDay,
+        adSpendByDay,
         ordersByProduct,
+        roasByProduct,
+        campaignRanking,
         preOrdersByCreator,
         closingRateByOwner,
         leadsVsOrdersByProduct,

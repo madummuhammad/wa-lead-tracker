@@ -531,6 +531,7 @@ function renderDashboardCards(cards) {
   el('statRealizedProfit').textContent = formatSignedRupiah(cards.realizedProfit);
   el('statProjectedProfit').textContent = formatSignedRupiah(cards.projectedProfit);
   el('statReturnLoss').textContent = formatSignedRupiah(cards.returnLoss);
+  el('statTotalBiayaIklan').textContent = formatRupiah(cards.totalBiayaIklan);
   el('statTotalOngkir').textContent = formatRupiah(cards.totalOngkir);
   el('statTotalBiayaCod').textContent = formatRupiah(cards.totalBiayaCod);
   el('statTotalPesanan').textContent = cards.totalPesanan;
@@ -551,6 +552,10 @@ function renderDashboardCharts(stats) {
   renderLineChart(el('chartRevenueByDay'), stats.revenueByDay, {
     xKey: 'date', yKey: 'omset', formatValue: chartFormatRupiahCompact,
     emptyMessage: 'Belum ada pesanan pada rentang ini.',
+  });
+  renderLineChart(el('chartAdSpendByDay'), stats.adSpendByDay, {
+    xKey: 'date', yKey: 'spend', color: '#eda100', formatValue: chartFormatRupiahCompact,
+    emptyMessage: 'Belum ada data iklan pada rentang ini.',
   });
   renderLineChart(el('chartChatsByDay'), stats.chatsByDay, {
     xKey: 'date', yKey: 'count', color: '#2a78d6', formatValue: chartFormatCompactNumber,
@@ -586,6 +591,47 @@ function renderDashboardCharts(stats) {
     { label: 'Pesanan', value: stats.funnel.orders },
     { label: 'Diterima', value: stats.funnel.delivered },
   ]);
+}
+
+// ROAS/CPA per product - see roasByProduct in server/app.js for why roas/cpa
+// arrive as `null` (not 0) when there's no spend/no orders to divide by.
+// ROAS below 1x (spent more than it made back) is highlighted red - the
+// clearest "this product's ads aren't paying for themselves" signal here.
+function renderRoasByProductTable(roasByProduct) {
+  const tbody = el('roasByProductTableBody');
+  tbody.innerHTML = (roasByProduct || [])
+    .map((r) => {
+      const roasText = r.roas === null ? '-' : `${r.roas}x`;
+      const roasClass = r.roas !== null && r.roas < 1 ? 'text-danger' : '';
+      return `
+        <tr>
+          <td>${escapeHtml(r.productName)}</td>
+          <td>${formatRupiah(r.omset)}</td>
+          <td>${formatRupiah(r.biayaIklan)}</td>
+          <td class="${roasClass}">${escapeHtml(roasText)}</td>
+          <td>${escapeHtml(r.orderCount)}</td>
+          <td>${r.cpa === null ? '-' : formatRupiah(r.cpa)}</td>
+        </tr>`;
+    })
+    .join('');
+  el('roasByProductEmptyState').classList.toggle('hidden', (roasByProduct || []).length > 0);
+}
+
+// Ranking Kampanye - see campaignRanking in server/app.js for why this is
+// sorted by Biaya per Hasil (Meta-native efficiency), not ROAS - an Order
+// only ties to a Product, never to the specific campaign that brought it in.
+function renderCampaignRankingTable(campaignRanking) {
+  const tbody = el('campaignRankingTableBody');
+  tbody.innerHTML = (campaignRanking || [])
+    .map((c) => `
+      <tr class="${c.wastedSpend ? 'row-wasted' : ''}">
+        <td>${escapeHtml(c.campaignName || c.campaignId)}</td>
+        <td>${formatRupiah(c.spend)}</td>
+        <td>${escapeHtml(c.results)}${c.wastedSpend ? ' <span class="text-danger">⚠ Tanpa Hasil</span>' : ''}</td>
+        <td>${c.costPerResult === null ? '-' : formatRupiah(c.costPerResult)}</td>
+      </tr>`)
+    .join('');
+  el('campaignRankingEmptyState').classList.toggle('hidden', (campaignRanking || []).length > 0);
 }
 
 // Local date components (not toISOString, which shifts to UTC and can land
@@ -637,6 +683,15 @@ async function renderDashboard() {
     const dateBasis = el('dashFilterDateBasis').value;
     const owner = el('dashFilterOwner').value;
     const creator = el('dashFilterCreator').value;
+    const includePreOrders = el('dashFilterIncludePreOrders').checked;
+    // "ROAS & Biaya per Order per Produk" table's own Omset toggles - see
+    // the roasIncludeHpp/Ongkir/CodFee comment in server/app.js. Ongkir/COD
+    // Fee default checked (subtracted, matching the standard Omset formula
+    // everywhere else); only sent when they DIVERGE from that default, same
+    // "only send what's non-default" convention as every other filter here.
+    const roasIncludeOngkir = el('roasFilterIncludeOngkir').checked;
+    const roasIncludeCodFee = el('roasFilterIncludeCodFee').checked;
+    const roasIncludeHpp = el('roasFilterIncludeHpp').checked;
     if (from) params.set('from', from);
     if (to) params.set('to', to);
     if (dateBasis && dateBasis !== 'order') params.set('dateBasis', dateBasis);
@@ -644,16 +699,29 @@ async function renderDashboard() {
     getMultiselectSelection('dashProvince').forEach((p) => params.append('province', p));
     dashSelectedProducts.forEach((p) => params.append('productName', p));
     if (creator && creator !== 'all') params.set('createdByEmail', creator);
+    if (includePreOrders) params.set('includePreOrders', 'true');
+    if (!roasIncludeOngkir) params.set('roasIncludeOngkir', 'false');
+    if (!roasIncludeCodFee) params.set('roasIncludeCodFee', 'false');
+    if (roasIncludeHpp) params.set('roasIncludeHpp', 'true');
 
     const stats = await apiGet(`/api/dashboard/stats?${params.toString()}`);
     populateDashboardFilterSelect(el('dashFilterOwner'), stats.filterOptions.owners, 'Semua akun');
     renderMultiselectPanel('dashProvince', DASH_PROVINCE_MULTISELECT, stats.filterOptions.provinces);
     populateDashboardProductPanel(stats.filterOptions.products);
     populateDashboardFilterSelect(el('dashFilterCreator'), stats.filterOptions.creators, 'Semua CS');
+    // See server/app.js includePreOrders comment - only Total
+    // Pesanan/Omset/rata-rata + Omset per Produk + ROAS/CPA per Produk
+    // change; the hint here just makes that boundary explicit so Profit/HPP
+    // numbers right below aren't mistaken for also including pipeline data.
+    el('dashOmsetPesananHint').textContent = includePreOrders
+      ? 'Dari pesanan yang tidak dibatalkan, + Pra-Pesanan aktif yang Status Respon-nya bukan Dibatalkan.'
+      : 'Dari pesanan yang tidak dibatalkan.';
     renderDashboardCards(stats.cards);
     renderOmsetByStatusCards(stats.omsetByStatus);
     renderProfitByStatusCards(stats.profitByStatus);
     renderDashboardCharts(stats);
+    renderRoasByProductTable(stats.roasByProduct);
+    renderCampaignRankingTable(stats.campaignRanking);
   } catch (e) {
     handleApiError(e, 'Gagal memuat statistik dashboard.');
   } finally {
@@ -3026,6 +3094,7 @@ function renderLaporanCards(cards) {
   el('statLaporanTotalOmset').textContent = formatRupiah(cards.totalOmset);
   el('statLaporanTotalBiayaIklan').textContent = formatRupiah(cards.totalBiayaIklan);
   el('statLaporanTotalHpp').textContent = formatRupiah(cards.totalHpp);
+  el('statLaporanTotalModal').textContent = formatRupiah(cards.totalModal);
   el('statLaporanTotalProfit').textContent = formatSignedRupiah(cards.totalProfit);
   el('statLaporanRealizedProfit').textContent = formatSignedRupiah(cards.realizedProfit);
   el('statLaporanTotalBonus').textContent = formatRupiah(cards.totalBonus);
@@ -3655,7 +3724,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   el('templateCancelEditBtn').addEventListener('click', closeTemplateFormModal);
   el('templateSaveBtn').addEventListener('click', saveTemplate);
 
-  ['dashFilterFrom', 'dashFilterTo', 'dashFilterOwner', 'dashFilterCreator'].forEach((id) => {
+  ['dashFilterFrom', 'dashFilterTo', 'dashFilterOwner', 'dashFilterCreator', 'dashFilterIncludePreOrders', 'roasFilterIncludeOngkir', 'roasFilterIncludeCodFee', 'roasFilterIncludeHpp'].forEach((id) => {
     el(id).addEventListener('input', renderDashboard);
   });
   wireMultiselect('dashProvince', DASH_PROVINCE_MULTISELECT, renderDashboard);
